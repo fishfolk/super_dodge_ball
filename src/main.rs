@@ -1,12 +1,20 @@
 use std::collections::HashMap;
 use std::ops::Deref;
 use macroquad::prelude::*;
-use macroquad::telemetry::frame;
 
 const PLAYER_HEIGHT: f32 = 25.;
 const PLAYER_BASE: f32 = 22.;
 
-#[derive(Eq, PartialEq, Hash)]
+trait HasDirection {
+    fn get_rot(&self) -> f32;
+    fn get_rot_as_radian(&self) -> f32;
+}
+
+trait Controllable {
+    fn get_keys(&self) -> HashMap<PlayerAction, KeyCode>;
+}
+
+#[derive(Eq, PartialEq, Hash, Debug)]
 enum PlayerAction {
     Throw,
     Catch,
@@ -21,23 +29,54 @@ enum FieldSide {
     OnRight,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 struct Player {
     pos: Vec2,
     rot: f32,
     vel: Vec2,
+    color: Color,
+
     life: i32,
     has_ball: bool,
-    catch_radius: f32,
-}
 
+    catch_radius: f32,
+    keys: HashMap<PlayerAction, KeyCode>,
+}
 
 #[derive(Clone)]
 struct Ball {
     pos: Vec2,
     vel: Vec2,
+    rot: f32,
+    color: Color,
+
     shot_at: f64,
     collided: bool,
+}
+
+impl HasDirection for Player {
+    fn get_rot(&self) -> f32 {
+        self.rot
+    }
+
+    fn get_rot_as_radian(&self) -> f32 {
+        self.rot.to_radians()
+    }
+}
+
+impl HasDirection for Ball {
+    fn get_rot(&self) -> f32 {
+        self.rot
+    }
+
+    fn get_rot_as_radian(&self) -> f32 {
+        self.rot.to_radians()
+    }
+}
+
+fn rotation_vector<T: HasDirection>(obj: &T) -> Vec2 {
+    let rotation = obj.get_rot_as_radian();
+    Vec2::new(rotation.sin(), -rotation.cos())
 }
 
 enum FromPosition {
@@ -45,6 +84,16 @@ enum FromPosition {
     Bottom,
     Right,
     Left,
+}
+
+fn calculate_life_color(life: i32) -> Color {
+    if life > 70 {
+        DARKGREEN
+    } else if life > 40 && life < 70 {
+        YELLOW
+    } else {
+        RED
+    }
 }
 
 fn valid_position(v: &Vec2) -> bool {
@@ -78,27 +127,38 @@ fn draw_player(player: &mut Player, rotation: f32) {
         player.pos.y + rotation.sin() * PLAYER_BASE / 2. + rotation.cos() * PLAYER_HEIGHT / 2.,
     );
 
-    draw_triangle_lines(v1, v2, v3, 2., if player.has_ball { BLUE } else { BLACK });
-}
-
-fn find_rotation_vec(player: &Player) -> Vec2 {
-    let player_rotation = player.rot.to_radians();
-    Vec2::new(player_rotation.sin(), -player_rotation.cos())
+    let color = if player.has_ball { BLUE } else { BLACK };
+    draw_triangle(v1, v2, v3, player.color);
+    draw_triangle_lines(v1, v2, v3, 3., color);
 }
 
 fn player_facing_ball(player: &Player, ball: &Ball) -> bool {
-    let rot_vec = find_rotation_vec(&player);
-    let calc = rot_vec.normalize().dot(ball.vel.normalize());
+    let player_rot_vec = rotation_vector(player);
+    let ball_rot_vec = rotation_vector(ball);
+    let calc = player_rot_vec.dot(ball_rot_vec);
     calc < 0.
 }
 
-fn catch_ball(player: &mut Player, ball: &mut Ball, last_player: i32) -> bool {
+fn catch_ball(player: &mut Player, ball: &mut Ball) -> bool {
     let facing_towards_ball = player_facing_ball(&player, &ball);
+    // ducking saves player from damage
+    if is_key_down(player.keys[&PlayerAction::Duck]) {
+        return false;
+    }
     if (ball.pos - player.pos).length() < player.catch_radius {
         player.has_ball = true;
         if !facing_towards_ball {
             player.life -= 1;
             println!("player was hit! {}", player.life);
+        } else {
+            // need to make sure catch key is pressed
+            if !is_key_down(player.keys[&PlayerAction::Catch]) {
+                player.life -= 1;
+                println!("player was hit! {}", player.life);
+            } else {
+                // now need to find if direction key is pressed or not
+                println!("{} {}", player.rot, player.rot.to_radians());
+            }
         }
         println!("P1: {}", player.rot);
         return true;
@@ -106,10 +166,10 @@ fn catch_ball(player: &mut Player, ball: &mut Ball, last_player: i32) -> bool {
     return false;
 }
 
-fn player_movement(player: &mut Player, keys: &HashMap<PlayerAction, KeyCode>) {
-    let player_rotation = player.rot.to_radians();
+fn move_player(player: &mut Player) {
+    let player_rotation = player.get_rot_as_radian();
     let mut acc = -player.vel / 10.;
-
+    let keys = &player.keys;
     if is_key_down(keys[&PlayerAction::MoveForward]) {
         acc = Vec2::new(player_rotation.sin(), -player_rotation.cos()) / 3.;
     }
@@ -122,7 +182,6 @@ fn player_movement(player: &mut Player, keys: &HashMap<PlayerAction, KeyCode>) {
     if player.vel.length() > 5. {
         player.vel = player.vel.normalize() * 5.;
     }
-
     let prev_pos = player.pos;
     player.pos += player.vel;
     if !valid_position(&player.pos) {
@@ -131,112 +190,142 @@ fn player_movement(player: &mut Player, keys: &HashMap<PlayerAction, KeyCode>) {
 }
 
 fn throw_ball(player: &mut Player, frame_t: f64) -> Option<Ball> {
-    let rot_vec = find_rotation_vec(&player);
+    let rot_vec = rotation_vector(player);
     player.has_ball = false;
     Some(Ball {
         pos: player.pos + rot_vec * PLAYER_HEIGHT,
-        vel: rot_vec * 3.,
+        vel: rot_vec * 1.,
+        rot: player.rot,
         shot_at: frame_t,
         collided: false,
+        color: DARKBROWN,
     })
 }
 
-#[macroquad::main("Super Dodge Ball")]
-async fn main() {
-    let mut player_one = Player {
-        pos: Vec2::new(20., screen_height() / 2.),
-        rot: 90.,
-        vel: Vec2::new(0., 0.),
-        life: 100,
-        has_ball: true,
-        catch_radius: PLAYER_HEIGHT + 2.,
-    };
+struct Game {
+    players: Vec<Player>,
+    ball: Option<Ball>,
+    last_shot: f64,
+    last_player: i32,
+}
 
-    let mut player_two = Player {
-        pos: Vec2::new(screen_width() - PLAYER_HEIGHT - 20., screen_height() / 2.),
-        rot: -90.,
-        vel: Vec2::new(0., 0.),
-        life: 100,
-        has_ball: false,
-        catch_radius: PLAYER_HEIGHT + 2.,
-    };
+impl Game {
+    fn new() -> Self {
+        Game {
+            players: vec![
+                Player {
+                    pos: Vec2::new(20., screen_height() / 2.),
+                    rot: 0.,
+                    vel: Vec2::new(0., 0.),
+                    life: 100,
+                    has_ball: true,
+                    catch_radius: PLAYER_HEIGHT + 2.,
+                    keys: Default::default(),
+                    color: BLACK,
+                },
+                Player {
+                    pos: Vec2::new(screen_width() - PLAYER_HEIGHT - 20., screen_height() / 2.),
+                    rot: 0.,
+                    vel: Vec2::new(0., 0.),
+                    life: 100,
+                    has_ball: false,
+                    catch_radius: PLAYER_HEIGHT + 2.,
+                    keys: Default::default(),
+                    color: DARKGRAY,
+                }],
+            ball: None,
+            last_shot: get_time(),
+            last_player: 1,
+        }
+    }
+}
 
-    let mut ball: Option<Ball> = None;
-    let mut last_shot = get_time();
-    let mut game_over = false;
-    let mut last_player = 1;
-
-    // let mut screen_center = Vec2::new(screen_width() / 2., screen_height() / 2.);
-    let player_one_keys = HashMap::from(
+fn new_game() -> Game {
+    let mut game = Game::new();
+    game.players[0].keys = HashMap::from(
         [
             (PlayerAction::MoveForward, KeyCode::W),
             (PlayerAction::MoveLeft, KeyCode::A),
             (PlayerAction::MoveRight, KeyCode::D),
-            (PlayerAction::Throw, KeyCode::E)
+            (PlayerAction::Throw, KeyCode::E),
+            (PlayerAction::Catch, KeyCode::Q),
+            (PlayerAction::Duck, KeyCode::C),
         ]
     );
 
-    let player_two_keys = HashMap::from(
+    game.players[1].keys = HashMap::from(
         [
             (PlayerAction::MoveForward, KeyCode::I),
             (PlayerAction::MoveLeft, KeyCode::J),
             (PlayerAction::MoveRight, KeyCode::L),
-            (PlayerAction::Throw, KeyCode::O)
+            (PlayerAction::Throw, KeyCode::O),
+            (PlayerAction::Catch, KeyCode::U),
+            (PlayerAction::Duck, KeyCode::P),
         ]
     );
+    game
+}
 
+#[macroquad::main("Super Dodge Ball")]
+async fn main() {
+    let mut game = new_game();
     loop {
         let frame_t = get_time();
-        let player_one_rotation = player_one.rot.to_radians();
-        let player_two_rotation = player_two.rot.to_radians();
-
-        player_movement(&mut player_one, &player_one_keys);
-        player_movement(&mut player_two, &player_two_keys);
-
-        if is_key_down(player_one_keys[&PlayerAction::Throw]) && player_one.has_ball {
-            ball = throw_ball(&mut player_one, frame_t);
-            last_shot = frame_t;
+        let player_one_rotation = game.players[0].get_rot_as_radian();
+        let player_two_rotation = game.players[1].get_rot_as_radian();
+        if is_key_pressed(KeyCode::Enter) {
+            game = new_game();
+            println!("Resetting Game");
+            next_frame().await;
+            continue;
         }
+        move_player(&mut game.players[0]);
+        move_player(&mut game.players[1]);
 
-        if is_key_down(KeyCode::O) && player_two.has_ball {
-            ball = throw_ball(&mut player_two, frame_t);
-            last_shot = frame_t;
+        if is_key_down(game.players[0].keys[&PlayerAction::Throw]) && game.players[0].has_ball {
+            game.ball = throw_ball(&mut game.players[0], frame_t);
+            game.last_shot = frame_t;
         }
-
-
-        ball = ball.as_ref().and_then(|b| {
+        if is_key_down(game.players[1].keys[&PlayerAction::Throw]) && game.players[1].has_ball {
+            game.ball = throw_ball(&mut game.players[1], frame_t);
+            game.last_shot = frame_t;
+        }
+        game.ball = game.ball.as_ref().and_then(|b| {
             let mut b_new = b.clone();
             b_new.pos += b_new.vel;
             Some(b_new)
         });
-
-        ball = ball.as_mut().and_then(|b| {
-            if last_player != 1 && catch_ball(&mut player_one, b, last_player) {
-                last_player = 1;
+        game.ball = game.ball.as_mut().and_then(|b| {
+            if game.last_player != 1 && catch_ball(&mut game.players[0], b) {
+                game.last_player = 1;
                 return None;
             }
-            if last_player != 2 && catch_ball(&mut player_two, b, last_player) {
-                last_player = 2;
+            if game.last_player != 2 && catch_ball(&mut game.players[1], b) {
+                game.last_player = 2;
                 return None;
             }
             Some(b.clone())
         });
-
-        if player_one.life == 0 {
-            game_over = true;
-        }
-
-        if game_over {
-            continue;
-        }
-
         clear_background(LIGHTGRAY);
-        ball.as_ref().map(|b| {
+        game.ball.as_ref().map(|b| {
+            let i = if game.last_player == 2 { 0 } else { 1 };
+            let txt = format!("r: {} a: {}",
+                              game.players[i].rot,
+                              b.pos.normalize().dot(rotation_vector(&game.players[i]).normalize()));
+            draw_text(&txt, b.pos.x, b.pos.y + 20.0, 20.0, DARKGRAY);
             draw_circle(b.pos.x, b.pos.y, 5., BLACK);
         });
 
-        draw_player(&mut player_one, player_one_rotation);
-        draw_player(&mut player_two, player_two_rotation);
+
+        let mut player = &mut game.players[0];
+        let txt = format!("{}", player.life);
+        draw_text(&txt, player.pos.x, player.pos.y - 20., 20.0, calculate_life_color(player.life));
+        draw_player(player, player_one_rotation);
+
+        let mut player = &mut game.players[1];
+        let txt = format!("{}", player.life);
+        draw_text(&txt, player.pos.x, player.pos.y - 20., 20.0, calculate_life_color(player.life));
+        draw_player(player, player_two_rotation);
 
         next_frame().await
     }
