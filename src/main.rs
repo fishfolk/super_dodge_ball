@@ -1,16 +1,16 @@
 use std::collections::HashMap;
 use macroquad::prelude::*;
-use crate::draw_utilities::{draw_line_a, draw_rectangle_lines_a};
+use game::has_direction;
+use game::draw_utilities::{draw_line_a, draw_rectangle_lines_a};
 use crate::game::{Game, new_game};
-use crate::has_direction::{HasDirection, rotation_vector};
+use game::has_direction::{HasDirection, rotation_vector};
+use game::player::Player;
+use crate::game::ball::Ball;
 
 const PLAYER_HEIGHT: f32 = 35.;
 const PLAYER_WIDTH: f32 = 35.;
 
-pub mod has_direction;
 pub mod game;
-pub mod draw_utilities;
-pub mod field;
 
 #[derive(Eq, PartialEq, Hash, Debug)]
 enum PlayerAction {
@@ -23,58 +23,9 @@ enum PlayerAction {
 }
 
 #[derive(Eq, PartialEq, Debug, Hash)]
-enum Team {
+pub enum Team {
     One,
     Two,
-}
-
-
-#[derive(PartialEq, Debug)]
-struct Player {
-    pos: Vec2,
-    rotation: f32,
-    vel: Vec2,
-    color: Color,
-    facing_to: FacingTo,
-    ducking: bool,
-    jumping: bool,
-    has_ball: bool,
-    life: i32,
-}
-
-#[derive(Clone)]
-struct Ball {
-    pos: Vec2,
-    vel: Vec2,
-    r: f32,
-    rotation: f32,
-    color: Color,
-    shot_at: f64,
-    collided: bool,
-}
-
-impl HasDirection for Player {
-    fn get_position(&self) -> Vec2 {
-        self.pos
-    }
-    fn get_rotation(&self) -> f32 {
-        self.rotation
-    }
-    fn get_rotation_as_radian(&self) -> f32 {
-        self.rotation.to_radians()
-    }
-}
-
-impl HasDirection for Ball {
-    fn get_position(&self) -> Vec2 {
-        self.pos
-    }
-    fn get_rotation(&self) -> f32 {
-        self.rotation
-    }
-    fn get_rotation_as_radian(&self) -> f32 {
-        self.rotation.to_radians()
-    }
 }
 
 
@@ -126,9 +77,6 @@ fn player_facing_ball(player: &Player, ball: &Ball) -> bool {
 
 fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
     // temporary variables to set edges for testing
-    // pos.x + r > player.pos.x && pos.x + r < player.pos.x + PLAYER_WIDTH
-    // &&
-    // pos.y + r > player.pos.y && pos.y + r < player.pos.y + PLAYER_HEIGHT
     let mut test_x = pos.x;
     let mut test_y = pos.y;
 
@@ -248,126 +196,145 @@ fn move_player(game: &mut Game, player_index: usize) {
     }
 }
 
-fn throw_ball(game: &mut Game, frame_t: f64) -> Option<Ball> {
+fn throw_ball(game: &mut Game, frame_t: f64) {
     let (player, other) = if game.team_with_ball == Team::One {
         (&game.players[1], &game.players[0])
     } else {
         (&game.players[0], &game.players[1])
     };
+    //..
     let rot_vec = rotation_vector(player);
     let target_pos = (other.pos - player.pos).normalize();
-    Some(Ball {
-        pos: player.pos + rot_vec * PLAYER_HEIGHT,
-        vel: target_pos * 5.,
-        r: 10.,
-        rotation: player.rotation,
-        shot_at: frame_t,
-        collided: false,
-        color: DARKBROWN,
-    })
+    game.ball.throwing(target_pos, player.pos + rot_vec * PLAYER_HEIGHT, player.rotation);
 }
+
+const RESET_KEY: usize = 12;
 
 #[macroquad::main("Super Dodge Ball")]
 async fn main() {
     let mut game = new_game();
+    // this will allow us to remap keys
+    let keys_mapped = vec![
+        KeyCode::W, KeyCode::A, KeyCode::S, KeyCode::D, KeyCode::N, KeyCode::M,
+        KeyCode::I, KeyCode::J, KeyCode::K, KeyCode::L, KeyCode::Z, KeyCode::X,
+        KeyCode::Enter,
+    ];
+    game.key_sets = HashMap::from([(
+        Team::One, HashMap::from([
+            (PlayerAction::MoveUp, keys_mapped[0]),
+            (PlayerAction::MoveLeft, keys_mapped[1]),
+            (PlayerAction::MoveDown, keys_mapped[2]),
+            (PlayerAction::MoveRight, keys_mapped[3]),
+            (PlayerAction::A, keys_mapped[4]),
+            (PlayerAction::B, keys_mapped[5]),
+        ])),
+        (Team::Two, HashMap::from([
+            (PlayerAction::MoveUp, keys_mapped[6]),
+            (PlayerAction::MoveLeft, keys_mapped[7]),
+            (PlayerAction::MoveDown, keys_mapped[8]),
+            (PlayerAction::MoveRight, keys_mapped[9]),
+            (PlayerAction::A, keys_mapped[10]),
+            (PlayerAction::B, keys_mapped[11]),
+        ]))
+    ]);
+    let mut time_pressed = 0.;
     loop {
         let frame_t = get_time();
+
         // store initial rotation
-        if is_key_pressed(KeyCode::Enter) {
+        if is_key_pressed(keys_mapped[RESET_KEY]) {
             game = new_game();
             println!("Resetting Game");
             next_frame().await;
             continue;
         }
-
-        // let target: &Player = find_closest_player(&ball, &game.players);
+        let time_diff = frame_t - time_pressed;
+        // if is_key_down(KeyCode::D) {
+        //     let last_key = get_last_key_pressed();
+        //     if last_key != None && last_key.unwrap() == KeyCode::D && time_diff < 0.5 {
+        //         running_mod = true;
+        //     }
+        // }
         // check which team has the ball
-
-        // game.mark_active_player(Team::One, frame_t);
-        // game.mark_active_player(Team::Two, frame_t);
-
+        let team = game.which_team_has_ball();
         for i in 0..game.players.len() {
             move_player(&mut game, i);
-            // if is_key_down(player.keys[&PlayerAction::B]) {
-            //     throw_ball(&mut game, frame_t);
-            // }
         }
 
-        if is_key_down(KeyCode::Key0) {
-            println!("{:?}", game.players);
-            // game.ball.
+        if is_mouse_button_pressed(MouseButton::Left) { // this is for testing purpose
+            let pos = Vec2::from(mouse_position());
+            // reposition the ball to cursor
+            game.ball.pos = pos;
+            // which team has the ball? and mark target player from opposite side
+            let team = game.which_team_has_ball();
+            let target_player = game.get_active_player(team, false);
+            let player: &Player = if target_player.is_some() {
+                &game.players[target_player.unwrap()]
+            } else {
+                &game.players[0]
+            };
+            // fix target
+            let target_pos = (player.pos - game.ball.pos).normalize();
+            // throw it
+            game.ball.throwing(target_pos, pos, 90.)
         }
-
-        if is_mouse_button_pressed(MouseButton::Left) {
-            game.ball.pos = Vec2::from(mouse_position());
-            let target_pos = (game.players[0].pos - game.ball.pos).normalize();
-            game.ball.vel = target_pos * 5.;
-        }
-
-        // find closest other team's player
-
-        // set him as target
-
-        // if game.players[0].has_ball {
-        //     if is_key_down(game.players[0].keys[&PlayerAction::B]) {
-        //         game.ball = throw_ball(&game.players[0], frame_t, &game.players[1]);
-        //         game.last_shot = frame_t;
-        //         game.players[0].has_ball = false;
-        //     }
-        // }
-
-        // if game.players[1].has_ball {
-        //     if is_key_down(game.players[1].keys[&PlayerAction::B]) {
-        //         game.ball = throw_ball(&game.players[1], frame_t, &game.players[0]);
-        //         game.last_shot = frame_t;
-        //         game.players[1].has_ball = false;
-        //     }
-        // }
-
         let prev_pos = &game.ball.pos;
         if prev_pos.y + game.ball.vel.y < game.field.top_edge || prev_pos.y + game.ball.vel.y > game.field.bottom_edge {
             game.ball.vel.y *= -1.;
+            game.ball.collided = true;
         }
         if prev_pos.x + game.ball.vel.x > game.field.right_edge || prev_pos.x + game.ball.vel.x < game.field.left_edge {
             game.ball.vel.x *= -1.;
+            game.ball.collided = true;
         }
-
-        for player in &game.players {
+        for (i, player) in game.players.iter_mut().enumerate() {
             let (collided, change_x, change_y) = colliding_with(&game.ball.pos, game.ball.r, &player);
             if !collided {
                 continue;
             }
-            if change_y {
-                game.ball.vel.y *= -1.;
-            }
-            if change_x {
-                game.ball.vel.x *= -1.;
+            // check if
+            // 1. ball is dropped
+            // 2. player is facing the ball
+            // 3. and is ready to catch it
+            if game.ball.dropped {
+                game.ball.picked_up(i);
+            } else {
+                // ball is not captured, so ball has hit the player
+                game.ball.collided = true;
+                game.ball.dropped = true;
+                if change_y {
+                    game.ball.vel.y *= -1.;
+                }
+                if change_x {
+                    game.ball.vel.x *= -1.;
+                }
+                game.ball.vel -= game.ball.vel / 10.;
             }
         }
+        if !game.ball.thrown {
+            if game.ball.grabbed_by.is_some() {
+                game.ball.pos = game.players[game.ball.grabbed_by.unwrap()].pos;
+            }
+        } else {
+            game.ball.pos += game.ball.vel;
+            if game.ball.vel.length() > 5. {
+                game.ball.vel = game.ball.vel.normalize() * 5.;
+            }
 
-        game.ball.pos += game.ball.vel;
-        if game.ball.vel.length() > 5. {
-            game.ball.vel = game.ball.vel.normalize() * 5.;
+            if game.ball.collided {
+                game.ball.vel -= game.ball.vel / 5.;
+            }
+
+            if game.ball.vel.length() < 0.1 {
+                game.ball.collided = false;
+                game.ball.vel = Vec2::default();
+                game.ball.grabbed_by = None;
+            }
         }
-
-        // game.ball.pos += game.ball.vel;
-
-
-        // game.ball = game.ball.as_mut().and_then(|b| {
-        //     if game.last_player != 1 && catch_ball(&mut game.players[0], b) {
-        //         game.last_player = 1;
-        //         return None;
-        //     }
-        //     if game.last_player != 2 && catch_ball(&mut game.players[1], b) {
-        //         game.last_player = 2;
-        //         return None;
-        //     }
-        //     Some(b.clone())
-        // });
         clear_background(LIGHTGRAY);
         draw_field(&game);
         debug_collision(&game);
-        draw_ball(&mut game);
+        draw_ball(&game);
         for player in &game.players {
             draw_player(player);
         }
@@ -376,11 +343,10 @@ async fn main() {
 }
 
 
-fn draw_ball(game: &mut Game) {
-    let i = if game.team_with_ball == Team::Two { 0 } else { 1 };
+fn draw_ball(game: &Game) {
     let txt = format!("r: {}, p: {}", game.ball.vel, game.ball.pos);
     draw_text(&txt, game.ball.pos.x, game.ball.pos.y + 20.0, 20.0, DARKGRAY);
-    draw_circle(game.ball.pos.x, game.ball.pos.y, game.ball.r, BLACK);
+    draw_circle(game.ball.pos.x, game.ball.pos.y, game.ball.r, game.ball.color);
 }
 
 fn debug_collision(game: &Game) {

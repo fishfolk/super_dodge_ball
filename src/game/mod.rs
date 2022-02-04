@@ -1,42 +1,85 @@
 use macroquad::prelude::*;
 use std::collections::HashMap;
-use crate::{Ball, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, rotation_vector, Team};
-use crate::field::Field;
+use crate::{FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, rotation_vector, Team};
+pub(crate) mod ball;
+pub(crate) mod field;
+pub mod player;
+pub mod has_direction;
+pub mod draw_utilities;
 
+use crate::game::ball::Ball;
+use crate::game::field::Field;
+
+#[derive(Eq, PartialEq)]
+pub enum Sideline {
+    Top,
+    Bottom,
+    Back,
+    Inside,
+}
 pub struct Game {
     pub(crate) players: Vec<Player>,
     pub(crate) ball: Ball,
-    pub(crate) last_shot: f64,
     pub(crate) team_with_ball: Team,
     pub(crate) active_chars: HashMap<Team, (usize, f64)>,
     pub(crate) field: Field,
     pub(crate) key_sets: HashMap<Team, HashMap<PlayerAction, KeyCode>>,
+    pub(crate) gravity: Vec2,
+    pub(crate) keys_pressed: Vec<KeyCode>,
 }
 
 
 impl Game {
-    pub(crate) fn mark_active_player(&mut self, which_team: Team, frame_t: f64) {
+    pub(crate) fn get_active_player(&self, which_team: Team, take_ball: bool) -> Option<usize> {
+        let team_two = (self.players.len() / 2, self.players.len());
+        let team_one = (0, self.players.len() / 2);
         let target_team_start_index = match which_team {
             Team::One => {
-                (0, self.players.len() / 2)
+                if take_ball { team_one } else { team_two}
             }
             Team::Two => {
-                (self.players.len() / 2, self.players.len())
+                if take_ball { team_two } else { team_one}
             }
         };
         let mut distance = 9999.;
         let mut which_player = None;
-        let active_player = self.active_chars.get(&which_team).unwrap();
-        println!("{:?} {} {}", active_player, frame_t - active_player.1, 0.016 * 3.);
         for i in target_team_start_index.0..target_team_start_index.1 {
             let player: &Player = &self.players[i];
-            if i == active_player.0 && frame_t - active_player.1 < 0.016 * 3. { continue; }
             if (self.ball.pos - player.pos).length() < distance {
                 distance = (self.ball.pos - player.pos).length();
                 which_player = Some(i);
             }
         }
-        self.active_chars.insert(which_team, (which_player.unwrap(), frame_t));
+        which_player
+    }
+
+    pub(crate) fn is_on_sideline(&self) -> Sideline {
+        if self.ball.pos.y < self.field.top_edge {
+            Sideline::Top
+        } else if self.ball.pos.y > self.field.bottom_edge {
+            Sideline::Bottom
+        } else if self.ball.pos.x > self.field.right_edge || self.ball.pos.x < self.field.left_edge {
+            Sideline::Back
+        } else {
+            Sideline::Inside
+        }
+    }
+
+    pub fn which_team_has_ball(&self) -> Team {
+        let on_sideline = self.is_on_sideline();
+        if self.ball.pos.x > self.field.mid_section {
+            if on_sideline != Sideline::Inside {
+                Team::One
+            } else {
+                Team::Two
+            }
+        } else {
+            if on_sideline != Sideline::Inside {
+                Team::Two
+            } else {
+                Team::One
+            }
+        }
     }
 
     pub fn new() -> Self {
@@ -88,37 +131,13 @@ impl Game {
                     jumping: false,
                 },
             ],
-            ball: Ball {
-                pos: Default::default(),
-                vel: Default::default(),
-                r: 0.0,
-                rotation: 0.0,
-                color: Default::default(),
-                shot_at: 0.0,
-                collided: false,
-            },
-            last_shot: get_time(),
+            ball: Ball::default(),
             team_with_ball: Team::One,
             active_chars: HashMap::from([(Team::One, (0, 0.0)), (Team::Two, (2, 0.0))]),
             field,
-            key_sets: HashMap::from([(
-                Team::One, HashMap::from([
-                    (PlayerAction::MoveUp, KeyCode::W),
-                    (PlayerAction::MoveLeft, KeyCode::A),
-                    (PlayerAction::MoveDown, KeyCode::S),
-                    (PlayerAction::MoveRight, KeyCode::D),
-                    (PlayerAction::A, KeyCode::N),
-                    (PlayerAction::B, KeyCode::M),
-                ])),
-                (Team::Two, HashMap::from([
-                    (PlayerAction::MoveUp, KeyCode::I),
-                    (PlayerAction::MoveLeft, KeyCode::J),
-                    (PlayerAction::MoveDown, KeyCode::K),
-                    (PlayerAction::MoveRight, KeyCode::L),
-                    (PlayerAction::A, KeyCode::Z),
-                    (PlayerAction::B, KeyCode::X),
-                ]))
-            ]),
+            key_sets: HashMap::default(),
+            gravity: Default::default(),
+            keys_pressed: vec![]
         };
         game
     }
@@ -132,10 +151,14 @@ pub fn new_game() -> Game {
         vel: Vec2::default(),
         r: 10.,
         rotation: game.players[0].rotation,
-        shot_at: 0.,
         collided: false,
-        color: DARKBROWN,
+        thrown: false,
+        dropped: false,
+        color: BLACK,
+        in_air: false,
+        grabbed_by: Some(0),
     };
     game.active_chars = HashMap::from([(Team::One, (0, 0.0)), (Team::Two, (game.players.len() / 2, 0.0))]);
+    game.gravity = Vec2::new(-2., -2.);
     game
 }
