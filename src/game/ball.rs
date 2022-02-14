@@ -6,7 +6,6 @@ pub struct Ball {
     pub(crate) pos: Vec2,
     pub(crate) vel: Vec2,
     pub(crate) r: f32,
-    pub(crate) rotation: f32,
     pub(crate) color: Color,
     pub(crate) collided: bool,
     pub(crate) thrown: bool,
@@ -27,13 +26,12 @@ impl Ball {
 }
 
 impl Ball {
-    pub(crate) fn throwing(&mut self, target_pos: Vec2, thrower_position: Vec2, rotation: f32) {
+    pub(crate) fn throwing(&mut self, target_pos: Vec2, thrower_position: Vec2) {
         self.pos = thrower_position;
         self.vel = target_pos * 5.;
         self.thrown = true;
         self.collided = false;
         self.in_air = true;
-        self.rotation = rotation;
         self.grabbed_by = None;
     }
 }
@@ -44,7 +42,6 @@ impl Ball {
             pos: Default::default(),
             vel: Default::default(),
             r: 0.0,
-            rotation: 0.0,
             color: Default::default(),
             collided: false,
             thrown: false,
@@ -58,12 +55,6 @@ impl Ball {
 impl crate::HasDirection for Ball {
     fn get_position(&self) -> Vec2 {
         self.pos
-    }
-    fn get_rotation(&self) -> f32 {
-        self.rotation
-    }
-    fn get_rotation_as_radian(&self) -> f32 {
-        self.rotation.to_radians()
     }
 }
 

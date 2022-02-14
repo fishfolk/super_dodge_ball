@@ -1,11 +1,17 @@
 use macroquad::prelude::*;
+use macroquad::prelude::animation::{Animation, AnimatedSprite};
 use std::collections::HashMap;
-use crate::{FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, rotation_vector, Team};
+use crate::{AnimationPlayer, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, Team};
+
+pub(crate) mod camera;
 pub(crate) mod ball;
 pub(crate) mod field;
 pub mod player;
 pub mod has_direction;
 pub mod draw_utilities;
+pub mod animations;
+pub mod resources;
+pub mod character;
 
 use crate::game::ball::Ball;
 use crate::game::field::Field;
@@ -17,29 +23,26 @@ pub enum Sideline {
     Back,
     Inside,
 }
+
 pub struct Game {
     pub(crate) players: Vec<Player>,
     pub(crate) ball: Ball,
     pub(crate) team_with_ball: Team,
-    pub(crate) active_chars: HashMap<Team, (usize, f64)>,
     pub(crate) field: Field,
     pub(crate) key_sets: HashMap<Team, HashMap<PlayerAction, KeyCode>>,
     pub(crate) gravity: Vec2,
     pub(crate) keys_pressed: Vec<KeyCode>,
+    pub(crate) textures: Vec<Texture2D>,
 }
 
 
 impl Game {
-    pub(crate) fn get_active_player(&self, which_team: Team, take_ball: bool) -> Option<usize> {
-        let team_two = (self.players.len() / 2, self.players.len());
+    pub(crate) fn get_active_player_for_team(&self, which_team: Team) -> Option<usize> {
         let team_one = (0, self.players.len() / 2);
+        let team_two = (self.players.len() / 2, self.players.len());
         let target_team_start_index = match which_team {
-            Team::One => {
-                if take_ball { team_one } else { team_two}
-            }
-            Team::Two => {
-                if take_ball { team_two } else { team_one}
-            }
+            Team::One => team_one,
+            Team::Two => team_two
         };
         let mut distance = 9999.;
         let mut which_player = None;
@@ -85,80 +88,46 @@ impl Game {
     pub fn new() -> Self {
         let field = Field::default();
         let game = Game {
-            players: vec![
-                Player {
-                    pos: Vec2::new(field.mid_section - PLAYER_WIDTH - 80., screen_height() / 2.),
-                    rotation: 90.,
-                    vel: Vec2::new(0., 0.),
-                    life: 100,
-                    has_ball: true,
-                    color: BLACK,
-                    facing_to: FacingTo::FacingRight,
-                    ducking: false,
-                    jumping: false,
-                },
-                Player {
-                    pos: Vec2::new(field.left_edge + PLAYER_WIDTH + 80., screen_height() / 2.),
-                    rotation: 90.,
-                    vel: Vec2::new(0., 0.),
-                    life: 100,
-                    has_ball: false,
-                    color: Color::new(10., 233., 134., 1.),
-                    facing_to: FacingTo::FacingRight,
-                    ducking: false,
-                    jumping: false,
-                },
-                Player {
-                    pos: Vec2::new(field.mid_section + 80., screen_height() / 2.),
-                    rotation: -90.,
-                    vel: Vec2::new(0., 0.),
-                    life: 100,
-                    has_ball: false,
-                    color: DARKGRAY,
-                    facing_to: FacingTo::FacingLeft,
-                    ducking: false,
-                    jumping: false,
-                },
-                Player {
-                    pos: Vec2::new(field.right_edge - 80., screen_height() / 2.),
-                    rotation: -90.,
-                    vel: Vec2::new(0., 0.),
-                    life: 100,
-                    has_ball: false,
-                    color: Color::new(0., 10., 10., 1.),
-                    facing_to: FacingTo::FacingLeft,
-                    ducking: false,
-                    jumping: false,
-                },
-            ],
+            players: vec![],
             ball: Ball::default(),
             team_with_ball: Team::One,
-            active_chars: HashMap::from([(Team::One, (0, 0.0)), (Team::Two, (2, 0.0))]),
             field,
             key_sets: HashMap::default(),
             gravity: Default::default(),
-            keys_pressed: vec![]
+            keys_pressed: vec![],
+            textures: vec![],
         };
         game
     }
 }
 
-pub fn new_game() -> Game {
-    let mut game = Game::new();
-    let rot_vec = rotation_vector(&game.players[0]);
-    game.ball = Ball {
-        pos: game.players[0].pos + rot_vec * PLAYER_HEIGHT,
-        vel: Vec2::default(),
-        r: 10.,
-        rotation: game.players[0].rotation,
-        collided: false,
-        thrown: false,
-        dropped: false,
-        color: BLACK,
-        in_air: false,
-        grabbed_by: Some(0),
-    };
-    game.active_chars = HashMap::from([(Team::One, (0, 0.0)), (Team::Two, (game.players.len() / 2, 0.0))]);
-    game.gravity = Vec2::new(-2., -2.);
-    game
+
+pub(crate) fn calculate_movement(keys: (bool, bool, bool, bool)) -> (f32, FacingTo, Option<Vec2>) {
+    let (key_up, key_right, key_down, key_left) = keys;
+    if key_up && key_right {
+        (45., FacingTo::FacingTopRight, Some(Vec2::new(1., -1.)))
+    } else if key_down && key_right {
+        (135., FacingTo::FacingBottomRight, Some(Vec2::new(1., 1.)))
+    } else if key_up && key_left {
+        (315., FacingTo::FacingTopLeft, Some(Vec2::new(-1., -1.)))
+    } else if key_down && key_left {
+        (225., FacingTo::FacingBottomLeft, Some(Vec2::new(-1., 1.)))
+    } else if key_right {
+        (90., FacingTo::FacingRight, Some(Vec2::new(1., 0.)))
+    } else if key_left {
+        (270., FacingTo::FacingLeft, Some(Vec2::new(-1., 0.)))
+    } else if key_down {
+        (180., FacingTo::FacingBottom, Some(Vec2::new(0., 1.)))
+    } else if key_up {
+        (0., FacingTo::FacingTop, Some(Vec2::new(0., -1.)))
+    } else {
+        (90., FacingTo::FacingRight, None)
+    }
+}
+
+pub(crate) fn other_team(team: Team) -> Team {
+    match team {
+        Team::One => { Team::Two }
+        Team::Two => { Team::One }
+    }
 }

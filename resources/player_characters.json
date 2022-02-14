@@ -1,0 +1,29 @@
+[
+  {
+    "id": "bandit",
+    "name": "Bandit",
+    "texture": "player_bandit",
+    "offset": {
+      "x": 0,
+      "y": 15.5
+    },
+    "animations": [
+      {
+        "id": "idle",
+        "row": 0,
+        "frames": 8,
+        "fps": 8,
+        "is_looping": true
+      }
+    ]
+  },
+  {
+    "id": "sharky",
+    "name": "Sharky",
+    "texture": "player_sharky",
+    "offset": {
+      "x": 0,
+      "y": 15.5
+    }
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "One": {
+    "Up": "W",
+    "Down": "S",
+    "Left": "A",
+    "Right": "D",
+    "A": "T",
+    "B": "Y"
+  },
+  "Two": {
+    "Up": "Up",
+    "Down": "Down",
+    "Left": "Left",
+    "Right": "Right",
+    "A": "/",
+    "B": "."
+  }
+}
