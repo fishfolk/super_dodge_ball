@@ -9,6 +9,7 @@ use crate::game::{calculate_movement, Game, other_team};
 use game::has_direction::{HasDirection};
 use game::player::Player;
 use crate::game::animations::{AnimationParams, AnimationPlayer};
+use crate::game::ball::animations::BallAnimations;
 use crate::game::ball::Ball;
 use crate::game::character::PlayerCharacterParams;
 use crate::game::resources::{load_resources, Resources};
@@ -23,14 +24,13 @@ pub mod noise;
 const PLAYER_HEIGHT: f32 = 40.;
 const PLAYER_WIDTH: f32 = 55.;
 const RESET_KEY: usize = 12;
-// frames
-const IDLE_FRAMES: usize = 8;
-const WALK_FRAMES: usize = 8;
-const RUN_FRAMES: usize = 4;
-const HURT_FRAMES: usize = 2;
-const DEATH_FRAMES: usize = 7;
-const THROW_FRAMES: usize = 8;
 
+const TEAM_ONE_PLAYER: usize = 1;
+const TEAM_TWO_PLAYER: usize = 2;
+const TEAM_ONE_PLAYER_READY: usize = 3;
+const TEAM_TWO_PLAYER_READY: usize = 3;
+const PLAYER_ANIMATED_TEXTURES: usize = 4;
+const DEFAULT_ZOOM: [f32; 2] = [-0.004, 0.004];
 
 fn _x<T: HasDirection>(p: &T) -> f32 {
     p.get_position().x
@@ -48,6 +48,13 @@ enum PlayerAction {
     MoveRight,
     MoveUp,
     MoveDown,
+}
+
+enum MovingStates {
+    MovingLeft,
+    MovingRight,
+    MovingUp,
+    MovingDown,
 }
 
 #[derive(Eq, PartialEq, Debug, Hash, Clone, Copy)]
@@ -95,20 +102,10 @@ fn valid_position(v: &Vec2) -> bool {
     true
 }
 
-
-fn player_facing_ball(player: &Player, ball: &Ball) -> bool {
-    // let player_rot_vec = has_direction::rotation_vector(player);
-    // let ball_rot_vec = has_direction::rotation_vector(ball);
-    // let calc = player_rot_vec.dot(ball_rot_vec);
-    // calc < 0.
-    true
-}
-
 fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
     // temporary variables to set edges for testing
     let mut test_x = pos.x;
     let mut test_y = pos.y;
-
     // which edge is closest?
     let change_x = if pos.x < player.pos.x {
         test_x = player.pos.x;      // test left edge
@@ -119,7 +116,7 @@ fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
     } else {
         false
     };
-
+    //
     let change_y = if pos.y < player.pos.y {
         test_y = player.pos.y;      // top edge
         true
@@ -137,71 +134,21 @@ fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
     (distance <= r, change_x, change_y)
 }
 
-fn catch_ball(player: &mut Player, ball: &mut Ball, keys: &HashMap<PlayerAction, KeyCode>) -> bool {
-    let facing_towards_ball = player_facing_ball(&player, &ball);
-    // ducking saves player from damage
-    if is_key_down(keys[&PlayerAction::A]) {
-        return false;
-    }
-    // if colliding_with(&ball.pos, ball.r, &player) {
-    //     player.has_ball = true;
-    //     let facing_to = &player.facing_to;
-    //     if !facing_towards_ball {
-    //         player.life -= 1;
-    //     } else {
-    //         // need to make sure catch key is pressed
-    //         let key_pressed = match facing_to {
-    //             FacingTo::FacingTop | FacingTo::FacingTopRight | FacingTo::FacingTopLeft => keys[&PlayerAction::MoveUp],
-    //             FacingTo::FacingBottom | FacingTo::FacingBottomRight | FacingTo::FacingBottomLeft => keys[&PlayerAction::MoveDown],
-    //             FacingTo::FacingRight => keys[&PlayerAction::MoveRight],
-    //             FacingTo::FacingLeft => keys[&PlayerAction::MoveLeft],
-    //         };
-    //         if !(is_key_down(keys[&PlayerAction::B]) && is_key_down(key_pressed)) {
-    //             player.life -= 1;
-    //             println!("player was hit! {}", player.life);
-    //         }
-    //         return true;
-    //     }
-    // }
-    return false;
-}
-
-
-fn move_player(game: &mut Game, player_index: usize) {
+fn update_player(game: &mut Game, player_index: usize) {
     let current_team = if player_index >= game.players.len() / 2 { Team::Two } else { Team::One };
     let active_player = game.deref().get_active_player_for_team(current_team);
-    let keys = &game.key_sets.get(&current_team).unwrap();
-    // player will not move while catching or ducking
-    if is_key_down(keys[&PlayerAction::B]) || is_key_down(keys[&PlayerAction::A]) {
-        return;
-    }
     if Some(player_index) != active_player { return; }
-    let player: &mut Player = &mut game.players[player_index];
-    player.animation_player.set_animation(Player::IDLE_ANIMATION_ID);
-    // mark the keys pressed
-    let keys_pressed = (
+    let keys = &game.key_sets.get(&current_team).unwrap();
+    let keys_pressed = [
         is_key_down(keys[&PlayerAction::MoveUp]),
         is_key_down(keys[&PlayerAction::MoveRight]),
         is_key_down(keys[&PlayerAction::MoveDown]),
         is_key_down(keys[&PlayerAction::MoveLeft]),
-    );
-    let (rotation, facing_to, acc) = calculate_movement(keys_pressed);
-    player.facing_to = facing_to;
-    player.rotation = rotation;
-    player.vel += acc.unwrap_or(-player.vel);
-    if player.vel.length() > 0. {
-        player.animation_player.set_animation(Player::MOVE_ANIMATION_ID);
-    }
-    if player.vel.length() > 5. {
-        player.vel = player.vel.normalize() * 5.;
-    }
-    let prev_pos = player.pos;
-    player.pos += player.vel;
-    if !valid_position(&player.pos) {
-        player.pos = prev_pos;
-        player.animation_player.set_animation(Player::HURT_ANIMATION_ID);
-    }
-    player.animation_player.update();
+        is_key_down(keys[&PlayerAction::B]),
+        is_key_down(keys[&PlayerAction::A])
+    ];
+    let player: &mut Player = &mut game.players[player_index];
+    player.move_(keys_pressed);
 }
 
 fn throw_ball(game: &mut Game, player_index: usize, team_with_ball: &Team) -> Option<usize> {
@@ -220,147 +167,9 @@ fn throw_ball(game: &mut Game, player_index: usize, team_with_ball: &Team) -> Op
     let target_pos = (target - pos).normalize();
     game.ball.throwing(target_pos, pos);
     game.players[player_index].has_ball = false;
+    game.balls[game.ball.animation].set_animation(Ball::MOVE_ANIMATION_ID);
+    game.balls[game.ball.animation].update();
     Some(target_player_index)
-}
-
-const TEAM_ONE_PLAYER: usize = 1;
-const TEAM_TWO_PLAYER: usize = 2;
-const TEAM_ONE_PLAYER_READY: usize = 3;
-const TEAM_TWO_PLAYER_READY: usize = 3;
-const PLAYER_ANIMATED_TEXTURES: usize = 4;
-
-
-async fn player_animation_demo() {
-    let player_characters = {
-        let resources = storage::get::<Resources>();
-        resources.player_characters.clone()
-    };
-
-    let mut animation_players = Vec::new();
-    for player_character in player_characters.iter() {
-        let mut animation_params: AnimationParams = player_character.animation.clone().into();
-        let mut player = AnimationPlayer::new(animation_params);
-        player.set_animation(Player::MOVE_ANIMATION_ID);
-        animation_players.push(player);
-    }
-    let animation_list = HashMap::from([
-        (KeyCode::Key0, Player::IDLE_ANIMATION_ID),
-        (KeyCode::Key1, Player::MOVE_ANIMATION_ID),
-        (KeyCode::Key2, Player::DEATH_BACK_ANIMATION_ID),
-        (KeyCode::Key3, Player::DEATH_FACE_ANIMATION_ID),
-        (KeyCode::Key4, Player::PUNCH_ANIMATION_ID),
-        (KeyCode::Key5, Player::RUN_ANIMATION_ID),
-        (KeyCode::Key6, Player::CROUCH_ANIMATION_ID),
-        (KeyCode::Key7, Player::JUMP_ANIMATION_ID),
-        (KeyCode::Key8, Player::FALL_ANIMATION_ID),
-        (KeyCode::Key9, Player::HURT_ANIMATION_ID),
-    ]);
-    loop {
-        let offset = Vec2::new(80., 0.);
-        let mut position = Vec2::new((screen_width() / 2.) - 64., (screen_height() / 2.) - 64.);
-        for animation_player in animation_players.iter_mut() {
-            for keys in &animation_list {
-                if is_key_pressed(*keys.0) {
-                    animation_player.set_animation(*keys.1);
-                }
-            }
-            animation_player.update();
-            animation_player.set_scale(2.0);
-            animation_player.draw(position, 0.0, false, false);
-            position += offset;
-        }
-        if is_key_pressed(KeyCode::Enter) {
-            break;
-        }
-        next_frame().await;
-    }
-}
-
-async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
-    let resources = storage::get::<Resources>();
-    let mut game = Game::new();
-    game.gravity = Vec2::new(-2., -2.);
-    game.key_sets = HashMap::from([(
-        Team::One, HashMap::from([
-            (PlayerAction::MoveUp, keys_mapped[0]),
-            (PlayerAction::MoveLeft, keys_mapped[1]),
-            (PlayerAction::MoveDown, keys_mapped[2]),
-            (PlayerAction::MoveRight, keys_mapped[3]),
-            (PlayerAction::A, keys_mapped[4]),
-            (PlayerAction::B, keys_mapped[5]),
-        ])),
-        (Team::Two, HashMap::from([
-            (PlayerAction::MoveUp, keys_mapped[6]),
-            (PlayerAction::MoveLeft, keys_mapped[7]),
-            (PlayerAction::MoveDown, keys_mapped[8]),
-            (PlayerAction::MoveRight, keys_mapped[9]),
-            (PlayerAction::A, keys_mapped[10]),
-            (PlayerAction::B, keys_mapped[11]),
-        ]))
-    ]);
-    game.textures = vec![
-        load_texture("resources/textures/soccer-ball.png").await.unwrap(),
-        load_texture("resources/textures/grin_64.png").await.unwrap(),
-        load_texture("resources/textures/grin_64_flipped.png").await.unwrap(),
-        load_texture("resources/textures/scared.png").await.unwrap(),
-        load_texture("resources/textures/player/bandit_64x64.png").await.unwrap(),
-    ];
-    let animation_player = || {
-        let mut animation_params: AnimationParams = resources.player_characters[0].animation.clone().into();
-        let mut animation_player = AnimationPlayer::new(animation_params);
-        animation_player.set_animation(Player::IDLE_ANIMATION_ID);
-        animation_player.set_scale(1.5);
-        animation_player
-    };
-    let mut players = vec![];
-    players.push(
-        Player::new(
-            0,
-            Vec2::new(game.field.mid_section - PLAYER_WIDTH - 80., screen_height() / 2.),
-            90.,
-            Vec2::new(0., 0.),
-            100,
-            false,
-            BLACK,
-            FacingTo::FacingRight,
-            animation_player(),
-        ));
-
-    players.push(Player::new(
-        1,
-        Vec2::new(game.field.mid_section + 80., screen_height() / 2.),
-        -90.,
-        Vec2::new(0., 0.),
-        100,
-        false,
-        DARKGRAY,
-        FacingTo::FacingLeft,
-        animation_player(),
-    ));
-    game.players = players;
-    game.ball = Ball {
-        pos: game.players[0].pos,
-        vel: Vec2::default(),
-        r: 10.,
-        collided: false,
-        thrown: false,
-        dropped: false,
-        color: BLACK,
-        in_air: false,
-        grabbed_by: Some(0),
-    };
-    game
-}
-
-fn window_conf() -> Conf {
-    Conf {
-        window_title: "Super dodge ball".to_owned(),
-        fullscreen: true,
-        window_resizable: false,
-        window_width: 1080,
-        window_height: 860,
-        ..Default::default()
-    }
 }
 
 async fn local_game() {
@@ -371,58 +180,60 @@ async fn local_game() {
         KeyCode::Enter,
     ];
     let mut game = new_game(&keys_mapped).await;
-    let mut time_pressed = 0.;
+    // let mut time_pressed = 0.;
     //
     //
     loop {
         let frame_t = get_time();
         if is_key_pressed(keys_mapped[RESET_KEY]) {
             game = new_game(&keys_mapped).await;
-            println!("Resetting Game");
+            game.set_zoom(None);
             next_frame().await;
             continue;
         }
         // check which team has the ball
         let team_with_ball = game.which_team_has_ball();
         for i in 0..game.players.len() {
-            move_player(&mut game, i);
-        }
-        if let Some(p) = game.ball.grabbed_by {
-            throw_ball(&mut game, p, &team_with_ball);
+            {
+                let player: &mut Player = &mut game.players[i];
+                let (collided, change_x, change_y) = colliding_with(&game.ball.pos, game.ball.r, &player);
+                if !collided { continue; }
+                if player.life <= 0 { continue; }
+                let option = game.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
+                // TODO must take account of how long the key pressed, if it's more than the threshold, stop catching
+                if is_key_down(*option) {
+                    player.catching(frame_t);
+                }
+                if is_key_released(*option) {
+                    player.not_catching();
+                }
+                // TODO: must break down the following ugly conditions
+                if player.ready_to_catch {
+                    game.ball.picked_up(i);
+                    player.ready_to_catch = false;
+                    player.has_ball = true;
+                } else {
+                    if !game.ball.stopped {
+                        if game.ball.thrown && player.is_hit == false {
+                            player.life -= 10;
+                            player.is_hit = true;
+                        }
+                        if player.life <= 0 {
+                            player.animation_player.set_animation(Player::DEATH_BACK_ANIMATION_ID);
+                            player.animation_player.update();
+                        } else {
+                            player.animation_player.set_animation(Player::HURT_ANIMATION_ID);
+                            player.animation_player.update();
+                        }
+                    } else {
+                        player.is_hit = false;
+                    }
+                    game.ball.update_velocity_on_collision(change_x, change_y);
+                }
+            }
+            game.set_zoom(None);
         }
 
-        debug_ball_throwing(&mut game);
-        is_ball_outside_boundary(&mut game);
-
-        for (i, player) in game.players.iter_mut().enumerate() {
-            let (collided, change_x, change_y) = colliding_with(&game.ball.pos, game.ball.r, &player);
-            if !collided {
-                continue;
-            }
-            let option = game.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
-            if is_key_down(*option) {
-                player.ready_to_catch = true;
-            }
-            if is_key_released(*option) {
-                player.ready_to_catch = false;
-            }
-            if player.ready_to_catch {
-                game.ball.picked_up(i);
-                player.ready_to_catch = false;
-                player.has_ball = true;
-            } else {
-                // ball is not captured, so ball has hit the player
-                game.ball.collided = true;
-                game.ball.dropped = true;
-                if change_y {
-                    game.ball.vel.y *= -1.;
-                }
-                if change_x {
-                    game.ball.vel.x *= -1.;
-                }
-                game.ball.vel -= game.ball.vel / 10.;
-            }
-        }
         if !game.ball.thrown {
             if game.ball.grabbed_by.is_some() {
                 match team_with_ball {
@@ -435,28 +246,55 @@ async fn local_game() {
                 }
             }
         } else {
-            game.ball.pos += game.ball.vel;
-            if game.ball.vel.length() > 5. {
-                game.ball.vel = game.ball.vel.normalize() * 5.;
-            }
+            game.ball.throw();
+            game.set_zoom(Some([-0.0035, 0.0035]));
+        }
 
-            if game.ball.collided {
-                game.ball.vel -= game.ball.vel / 5.;
-            }
+        for i in 0..game.players.len() {
+            update_player(&mut game, i);
+        }
+        if let Some(p) = game.ball.grabbed_by {
+            throw_ball(&mut game, p, &team_with_ball);
+        }
 
-            if game.ball.vel.length() < 0.1 {
-                game.ball.collided = false;
-                game.ball.vel = Vec2::default();
-                game.ball.grabbed_by = None;
+        debug_ball_throwing(&mut game);
+        is_ball_outside_boundary(&mut game);
+
+        //
+        //
+        // Drawing stuffs
+        //
+        //
+
+        match mouse_wheel() {
+            (_x, y) if y != 0.0 => {
+                let mut zoom = game.zoom;
+                zoom *= 1.1f32.powf(y);
+                game.set_zoom(Some([zoom.x, zoom.y]));
             }
+            _ => (),
         }
         clear_background(LIGHTGRAY);
-        draw_field(&game);
+        set_camera(&Camera2D {
+            target: game.ball.pos,
+            rotation: 180.,
+            zoom: game.zoom,
+            ..Default::default()
+        });
         debug_collision(&game);
-        draw_ball(&game);
-        // draw_players(&game, frame_t);
+        {
+            let bx = _x(&game.ball);
+            let by = _y(&game.ball);
+            let which_animation = if game.ball.in_air {
+                Ball::MOVE_ANIMATION_ID
+            } else {
+                Ball::IDLE_ANIMATION_ID
+            };
+            game.balls[game.ball.animation].set_animation(which_animation);
+            game.balls[game.ball.animation].update();
+            game.balls[game.ball.animation].draw(Vec2::new(bx, by), 0., false, false);
+        }
         for (i, player) in game.players.iter().enumerate() {
-            // draw some status
             let txt = format!("{}", player.life);
             draw_text(&txt, player.pos.x, player.pos.y - 20., 20.0, calculate_life_color(player.life));
             let flip_x = i >= game.players.len() / 2;
@@ -471,8 +309,9 @@ async fn local_game() {
 #[macroquad::main(window_conf)]
 async fn main() {
     load_resources("resources").await;
-    player_animation_demo().await;
+    // player_animation_demo().await;
     local_game().await;
+    //camera_test().await;
 }
 
 fn is_ball_outside_boundary(game: &mut Game) {
@@ -508,13 +347,6 @@ fn debug_ball_throwing(game: &mut Game) {
     }
 }
 
-
-fn draw_ball(game: &Game) {
-    let bx = _x(&game.ball);
-    let by = _y(&game.ball);
-    draw_texture(game.textures[0], bx - game.ball.r, by - game.ball.r, WHITE);
-}
-
 fn debug_collision(game: &Game) {
     let position = Vec2::from(mouse_position());
     for player in &game.players {
@@ -537,3 +369,298 @@ fn draw_field(game: &Game) {
     draw_line_a(game.field.mid_section_top, game.field.mid_section_bottom, 3., YELLOW);
 }
 
+async fn player_animation_demo() {
+    let (player_characters, balls) = {
+        let resources = storage::get::<Resources>();
+        (resources.player_characters.clone(), resources.balls.clone())
+    };
+
+    let mut animation_players = Vec::new();
+    for player_character in player_characters.iter() {
+        let mut animation_params: AnimationParams = player_character.animation.clone().into();
+        let mut player = AnimationPlayer::new(animation_params);
+        player.set_animation(Player::MOVE_ANIMATION_ID);
+        animation_players.push(player);
+    }
+    for ball in balls {
+        let mut animation_params: AnimationParams = ball.animation.clone().into();
+        let mut player = AnimationPlayer::new(animation_params);
+        player.set_animation(Ball::MOVE_ANIMATION_ID);
+        animation_players.push(player);
+    }
+    let animation_list = HashMap::from([
+        (KeyCode::Key0, Player::IDLE_ANIMATION_ID),
+        (KeyCode::Key1, Player::MOVE_ANIMATION_ID),
+        (KeyCode::Key2, Player::DEATH_BACK_ANIMATION_ID),
+        (KeyCode::Key3, Player::DEATH_FACE_ANIMATION_ID),
+        (KeyCode::Key4, Player::PUNCH_ANIMATION_ID),
+        (KeyCode::Key5, Player::RUN_ANIMATION_ID),
+        (KeyCode::Key6, Player::CROUCH_ANIMATION_ID),
+        (KeyCode::Key7, Player::JUMP_ANIMATION_ID),
+        (KeyCode::Key8, Player::FALL_ANIMATION_ID),
+        (KeyCode::Key9, Player::HURT_ANIMATION_ID),
+    ]);
+
+    loop {
+        let offset = Vec2::new(80., 0.);
+        let mut position = Vec2::new((screen_width() / 2.) - 64., (screen_height() / 2.) - 64.);
+        for animation_player in animation_players.iter_mut() {
+            for keys in &animation_list {
+                if is_key_pressed(*keys.0) {
+                    animation_player.set_animation(*keys.1);
+                }
+            }
+            animation_player.update();
+            animation_player.set_scale(2.0);
+            animation_player.draw(position, 0.0, false, false);
+            position += offset;
+        }
+        if is_key_pressed(KeyCode::Enter) {
+            break;
+        }
+        next_frame().await;
+    }
+}
+
+async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
+    let resources = storage::get::<Resources>();
+    let mut game = Game::default();
+    game.gravity = Vec2::new(-2., -2.);
+    game.key_sets = HashMap::from([(
+        Team::One, HashMap::from([
+            (PlayerAction::MoveUp, keys_mapped[0]),
+            (PlayerAction::MoveLeft, keys_mapped[1]),
+            (PlayerAction::MoveDown, keys_mapped[2]),
+            (PlayerAction::MoveRight, keys_mapped[3]),
+            (PlayerAction::A, keys_mapped[4]),
+            (PlayerAction::B, keys_mapped[5]),
+        ])),
+        (Team::Two, HashMap::from([
+            (PlayerAction::MoveUp, keys_mapped[6]),
+            (PlayerAction::MoveLeft, keys_mapped[7]),
+            (PlayerAction::MoveDown, keys_mapped[8]),
+            (PlayerAction::MoveRight, keys_mapped[9]),
+            (PlayerAction::A, keys_mapped[10]),
+            (PlayerAction::B, keys_mapped[11]),
+        ]))
+    ]);
+    game.players = { // Player animations
+        let player_animations = || {
+            let mut animation_params: AnimationParams = resources.player_characters[0].animation.clone().into();
+            let mut animation_player = AnimationPlayer::new(animation_params);
+            animation_player.set_animation(Player::IDLE_ANIMATION_ID);
+            animation_player.set_scale(1.);
+            animation_player
+        };
+        let mut players = vec![];
+        players.push(Player::new(
+            0,
+            Vec2::new(game.field.mid_section - PLAYER_WIDTH - 80., screen_height() / 2.),
+            90.,
+            Vec2::new(0., 0.),
+            100,
+            false,
+            BLACK,
+            FacingTo::FacingRight,
+            player_animations(),
+        ));
+
+        players.push(Player::new(
+            1,
+            Vec2::new(game.field.mid_section + 80., screen_height() / 2.),
+            -90.,
+            Vec2::new(0., 0.),
+            100,
+            false,
+            DARKGRAY,
+            FacingTo::FacingLeft,
+            player_animations(),
+        ));
+        players
+    };
+    game.balls = {
+        let mut animation_params: AnimationParams = resources.balls[0].animation.clone().into();
+        let mut animation_player = AnimationPlayer::new(animation_params);
+        animation_player.set_animation(Ball::IDLE_ANIMATION_ID);
+        vec![animation_player]
+    };
+    game.ball = Ball {
+        pos: game.players[0].pos,
+        vel: Vec2::default(),
+        r: 10.,
+        collided: false,
+        thrown: false,
+        dropped: false,
+        color: BLACK,
+        in_air: false,
+        grabbed_by: Some(0),
+        animation: 0,
+        stopped: true,
+    };
+    game
+}
+
+fn window_conf() -> Conf {
+    Conf {
+        window_title: "Super dodge ball".to_owned(),
+        fullscreen: false,
+        window_resizable: true,
+        window_width: 1080,
+        window_height: 860,
+        ..Default::default()
+    }
+}
+
+
+fn short_angle_dist(a0: f32, a1: f32) -> f32 {
+    let max = 360.0;
+    let da = (a1 - a0) % max;
+    2.0 * da % max - da
+}
+
+fn angle_lerp(a0: f32, a1: f32, t: f32) -> f32 {
+    a0 + short_angle_dist(a0, a1) * t
+}
+
+fn draw_cross(x: f32, y: f32, color: Color) {
+    let size = 0.1;
+    let thickness = 0.005;
+    draw_line(x - size, y, x + size, y, thickness, color);
+    draw_line(x, y - size, x, y + size, thickness, color);
+}
+
+async fn camera_test() {
+    let mut target = (0., 0.);
+    let mut zoom = 1.0;
+    let mut rotation = 0.0;
+    let mut smooth_rotation: f32 = 0.0;
+    let mut offset = (0., 0.);
+
+    loop {
+        if is_key_down(KeyCode::W) {
+            target.1 -= 0.1;
+        }
+        if is_key_down(KeyCode::S) {
+            target.1 += 0.1;
+        }
+        if is_key_down(KeyCode::A) {
+            target.0 += 0.1;
+        }
+        if is_key_down(KeyCode::D) {
+            target.0 -= 0.1;
+        }
+        if is_key_down(KeyCode::Left) {
+            offset.0 -= 0.1;
+        }
+        if is_key_down(KeyCode::Right) {
+            offset.0 += 0.1;
+        }
+        if is_key_down(KeyCode::Up) {
+            offset.1 += 0.1;
+        }
+        if is_key_down(KeyCode::Down) {
+            offset.1 -= 0.1;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if is_key_down(KeyCode::Q) | is_key_down(KeyCode::Escape) {
+            break;
+        }
+
+        match mouse_wheel() {
+            (_x, y) if y != 0.0 => {
+                // Normalize mouse wheel values is browser (chromium: 53, firefox: 3)
+                #[cfg(target_arch = "wasm32")]
+                    let y = if y < 0.0 {
+                    -1.0
+                } else if y > 0.0 {
+                    1.0
+                } else {
+                    0.0
+                };
+                if is_key_down(KeyCode::LeftControl) {
+                    zoom *= 1.1f32.powf(y);
+                } else {
+                    rotation += 10.0 * y;
+                    rotation = match rotation {
+                        angle if angle >= 360.0 => angle - 360.0,
+                        angle if angle < 0.0 => angle + 360.0,
+                        angle => angle,
+                    }
+                }
+            }
+            _ => (),
+        }
+
+        smooth_rotation = angle_lerp(smooth_rotation, rotation, 0.1);
+
+        clear_background(LIGHTGRAY);
+
+        set_camera(&Camera2D {
+            target: vec2(target.0, target.1),
+            ..Default::default()
+        });
+        draw_cross(0., 0., RED);
+
+        set_camera(&Camera2D {
+            target: vec2(target.0, target.1),
+            rotation: smooth_rotation,
+            ..Default::default()
+        });
+        draw_cross(0., 0., GREEN);
+
+        set_camera(&Camera2D {
+            target: vec2(target.0, target.1),
+            rotation: smooth_rotation,
+            zoom: vec2(zoom, zoom * screen_width() / screen_height()),
+            ..Default::default()
+        });
+        draw_cross(0., 0., BLUE);
+
+        set_camera(&Camera2D {
+            target: vec2(target.0, target.1),
+            rotation: smooth_rotation,
+            zoom: vec2(zoom, zoom * screen_width() / screen_height()),
+            offset: vec2(offset.0, offset.1),
+            ..Default::default()
+        });
+
+        // Render some primitives in camera space
+        draw_line(-0.4, 0.4, -0.8, 0.9, 0.05, BLUE);
+        draw_rectangle(-0.3, 0.3, 0.2, 0.2, GREEN);
+        draw_circle(0., 0., 0.1, YELLOW);
+
+        // Back to screen space, render some text
+        set_default_camera();
+        draw_text(
+            format!("target (WASD keys) = ({:+.2}, {:+.2})", target.0, target.1).as_str(),
+            10.0,
+            10.0,
+            15.0,
+            BLACK,
+        );
+        draw_text(
+            format!("rotation (mouse wheel) = {} degrees", rotation).as_str(),
+            10.0,
+            25.0,
+            15.0,
+            BLACK,
+        );
+        draw_text(
+            format!("zoom (ctrl + mouse wheel) = {:.2}", zoom).as_str(),
+            10.0,
+            40.0,
+            15.0,
+            BLACK,
+        );
+        draw_text(
+            format!("offset (arrow keys) = ({:+.2}, {:+.2})", offset.0, offset.1).as_str(),
+            10.0,
+            55.0,
+            15.0,
+            BLACK,
+        );
+        draw_text("HELLO", 30.0, 200.0, 30.0, BLACK);
+
+        next_frame().await
+    }
+}

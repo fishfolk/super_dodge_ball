@@ -7,6 +7,7 @@ use macroquad::texture;
 use crate::helpers::text::ToStringHelper;
 use serde::{Deserialize, Serialize};
 use crate::error::{Result, Error};
+use crate::game::ball::BallParams;
 use crate::game::character::PlayerCharacterParams;
 use crate::json::deserialize_json_file;
 
@@ -46,12 +47,14 @@ pub struct Resources {
     pub assets_dir: String,
     pub textures: HashMap<String, TextureResource>,
     pub player_characters: Vec<PlayerCharacterParams>,
+    pub balls: Vec<BallParams>,
 }
 
 impl Resources {
     pub const TEXTURES_FILE: &'static str = "textures";
     pub const RESOURCE_FILES_EXTENSION: &'static str = "json";
     pub const PLAYER_CHARACTERS_FILE: &'static str = "player_characters";
+    pub const BALLS_FILE: &'static str = "balls";
 
     pub async fn new(assets_dir: &str) -> Result<Self> {
         let assets_dir_path = Path::new(assets_dir);
@@ -94,11 +97,19 @@ impl Resources {
             deserialize_json_file(&path).await?
         };
 
+        let balls = {
+            let path = assets_dir_path
+                .join(Self::BALLS_FILE)
+                .with_extension(Self::RESOURCE_FILES_EXTENSION);
+            deserialize_json_file(&path).await?
+        };
+
         #[allow(clippy::inconsistent_struct_constructor)]
         Ok(Resources {
             assets_dir: assets_dir.to_string(),
             textures,
             player_characters,
+            balls,
         })
     }
 }

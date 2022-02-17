@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use macroquad::color::Color;
 use macroquad::math::Rect;
-use crate::{AnimationPlayer, FacingTo, HasDirection, Vec2};
+use crate::{AnimationPlayer, calculate_movement, FacingTo, HasDirection, KeyCode, PlayerAction, valid_position, Vec2};
 use crate::game::ball::Ball;
 use crate::game::character::PlayerCharacterParams;
 
@@ -19,6 +20,75 @@ pub struct Player {
     pub(crate) ready_to_catch: bool,
     pub(crate) camera_box: Rect,
     pub(crate) animation_player: AnimationPlayer,
+    pub(crate) is_hit: bool,
+    pub(crate) catch_grace_time: f64,
+}
+
+impl Player {
+    pub(crate) fn not_catching(&mut self) {
+        self.ready_to_catch = false;
+        self.catch_grace_time = 0.;
+    }
+}
+
+impl Player {
+    pub fn catching(&mut self, frame_t: f64) {
+        if !self.ready_to_catch {
+            self.ready_to_catch = true;
+            self.catch_grace_time = frame_t;
+        } else {
+            self.catch_grace_time += frame_t;
+        }
+        if self.catch_grace_time > Player::CATCH_GRACE_TIME {
+            self.ready_to_catch = false;
+            self.catch_grace_time = 0.
+        }
+    }
+}
+
+impl Player {
+    pub(crate) fn move_(&mut self, keys_pressed: [bool; 6]) {
+        // can move the bellow code to player
+        if self.life <= 0 {
+            self.animation_player.set_animation(Player::DEATH_BACK_ANIMATION_ID);
+            self.animation_player.update();
+            return;
+        }
+        if self.is_hit {
+            self.animation_player.set_animation(Player::HURT_ANIMATION_ID);
+            self.animation_player.update();
+            return;
+        }
+        self.animation_player.set_animation(Player::IDLE_ANIMATION_ID);
+        // mark the keys pressed
+        if keys_pressed[4] && keys_pressed.contains(&true) {
+            self.animation_player.set_animation(Player::CATCH_ANIMATION_ID);
+            self.animation_player.update();
+            return;
+        }
+        if keys_pressed[5] {
+            self.animation_player.set_animation(Player::CROUCH_ANIMATION_ID);
+            self.animation_player.update();
+            return;
+        }
+        let (rotation, facing_to, acc) = calculate_movement(keys_pressed);
+        self.facing_to = facing_to;
+        self.rotation = rotation;
+        self.vel += acc.unwrap_or(-self.vel);
+        if self.vel.length() > 0. {
+            self.animation_player.set_animation(Player::MOVE_ANIMATION_ID);
+        }
+        if self.vel.length() > 5. {
+            self.vel = self.vel.normalize() * 5.;
+        }
+        let prev_pos = self.pos;
+        self.pos += self.vel;
+        if !valid_position(&self.pos) {
+            self.pos = prev_pos;
+            self.animation_player.set_animation(Player::HURT_ANIMATION_ID);
+        }
+        self.animation_player.update();
+    }
 }
 
 impl Player {
@@ -32,6 +102,9 @@ impl Player {
     pub const PUNCH_ANIMATION_ID: &'static str = "punch";
     pub const RUN_ANIMATION_ID: &'static str = "run";
     pub const HURT_ANIMATION_ID: &'static str = "hurt";
+    pub const CATCH_ANIMATION_ID: &'static str = "catching";
+
+    pub const CATCH_GRACE_TIME: f64 = 5.;
 
     pub fn new(id:u8, pos: Vec2, rotation: f32,
                vel: Vec2, life: i32, has_ball: bool, color: Color,
@@ -44,6 +117,7 @@ impl Player {
             vel,
             life,
             running: false,
+            is_hit: false,
             has_ball,
             color,
             facing_to,
@@ -52,6 +126,7 @@ impl Player {
             ready_to_catch: false,
             camera_box: Default::default(),
             animation_player,
+            catch_grace_time: 0.,
         }
     }
 
@@ -66,4 +141,12 @@ impl HasDirection for Player {
     fn get_position(&self) -> Vec2 {
         self.pos
     }
+}
+
+enum PlayerStates {
+    Idle,
+    Moving,
+    Running,
+    Catching,
+    Ducking
 }

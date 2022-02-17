@@ -1,7 +1,8 @@
 use macroquad::prelude::*;
 use macroquad::prelude::animation::{Animation, AnimatedSprite};
 use std::collections::HashMap;
-use crate::{AnimationPlayer, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, Team};
+use crate::{AnimationPlayer, DEFAULT_ZOOM, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, Team};
+use crate::game::ball::animations::BallAnimationParams;
 
 pub(crate) mod camera;
 pub(crate) mod ball;
@@ -26,6 +27,7 @@ pub enum Sideline {
 
 pub struct Game {
     pub(crate) players: Vec<Player>,
+    pub(crate) balls: Vec<AnimationPlayer>,
     pub(crate) ball: Ball,
     pub(crate) team_with_ball: Team,
     pub(crate) field: Field,
@@ -33,10 +35,12 @@ pub struct Game {
     pub(crate) gravity: Vec2,
     pub(crate) keys_pressed: Vec<KeyCode>,
     pub(crate) textures: Vec<Texture2D>,
+    pub(crate) zoom: Vec2,
 }
 
 
 impl Game {
+
     pub(crate) fn get_active_player_for_team(&self, which_team: Team) -> Option<usize> {
         let team_one = (0, self.players.len() / 2);
         let team_two = (self.players.len() / 2, self.players.len());
@@ -85,25 +89,29 @@ impl Game {
         }
     }
 
-    pub fn new() -> Self {
-        let field = Field::default();
-        let game = Game {
+    pub fn default() -> Self {
+        Game {
             players: vec![],
+            balls: vec![],
             ball: Ball::default(),
             team_with_ball: Team::One,
-            field,
+            field: Field::default(),
             key_sets: HashMap::default(),
             gravity: Default::default(),
             keys_pressed: vec![],
             textures: vec![],
-        };
-        game
+            zoom: Vec2::from(DEFAULT_ZOOM),
+        }
+    }
+
+    pub fn set_zoom(&mut self, zoom: Option<[f32;2]>) {
+        self.zoom = Vec2::from(zoom.unwrap_or(DEFAULT_ZOOM));
     }
 }
 
 
-pub(crate) fn calculate_movement(keys: (bool, bool, bool, bool)) -> (f32, FacingTo, Option<Vec2>) {
-    let (key_up, key_right, key_down, key_left) = keys;
+pub(crate) fn calculate_movement(keys: [bool;6]) -> (f32, FacingTo, Option<Vec2>) {
+    let (key_up, key_right, key_down, key_left) = (keys[0], keys[1], keys[2], keys[3]);
     if key_up && key_right {
         (45., FacingTo::FacingTopRight, Some(Vec2::new(1., -1.)))
     } else if key_down && key_right {

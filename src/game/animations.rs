@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::game::resources::Resources;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Animation {
+pub struct AnimationMetadata {
     pub id: String,
     pub row: u32,
     pub frames: u32,
@@ -19,8 +19,8 @@ pub struct Animation {
     pub is_looping: bool,
 }
 
-impl From<Animation> for MQAnimation {
-    fn from(a: Animation) -> Self {
+impl From<AnimationMetadata> for MQAnimation {
+    fn from(a: AnimationMetadata) -> Self {
         MQAnimation {
             name: a.id,
             row: a.row,
@@ -50,7 +50,7 @@ pub struct AnimationParams {
     /// An optional color to blend with the texture color
     pub tint: Option<Color>,
     /// A list of animations that will be available in the `AnimationPlayer`
-    pub animations: Vec<Animation>,
+    pub animations: Vec<AnimationMetadata>,
     /// If this is true, the `AnimationPlayer` will automatically start playing its first animation.
     pub should_autoplay: bool,
     /// If this is true, the `AnimationPlayer` will not be updated or drawn.
@@ -81,7 +81,7 @@ pub struct AnimationPlayer {
     pivot: Option<Vec2>,
     tint: Color,
     sprite: AnimatedSprite,
-    animations: Vec<Animation>,
+    animations: Vec<AnimationMetadata>,
     time: f32,
     current_frame: u32,
     pub is_deactivated: bool,
@@ -218,13 +218,13 @@ impl AnimationPlayer {
         self.scale = scale;
     }
 
-    pub fn get_animation(&self, id: &str) -> Option<&Animation> {
+    pub fn get_animation(&self, id: &str) -> Option<&AnimationMetadata> {
         self.animations.iter().find(|a| a.id == id)
     }
 
     // Set the current animation, using the animations id.
     // Will return a reference to the animation or `None`, if it doesn't exist
-    pub fn set_animation(&mut self, id: &str) -> Option<&Animation> {
+    pub fn set_animation(&mut self, id: &str) -> Option<&AnimationMetadata> {
         let res = self.animations.iter().enumerate().find(|(_, a)| a.id == id);
 
         if let Some((i, animation)) = res {

@@ -1,7 +1,7 @@
 use macroquad::prelude::*;
 
 use serde::{Deserialize, Serialize};
-use crate::game::animations::{Animation, AnimationParams};
+use crate::game::animations::{AnimationMetadata, AnimationParams};
 
 use crate::{json, Player};
 
@@ -56,30 +56,32 @@ impl From<PlayerAnimationParams> for AnimationParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerAnimations {
     #[serde(default = "PlayerAnimations::default_idle_animation")]
-    pub idle: Animation,
+    pub idle: AnimationMetadata,
     #[serde(rename = "move", default = "PlayerAnimations::default_move_animation")]
-    pub moving: Animation,
+    pub moving: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_jump_animation")]
-    pub jump: Animation,
+    pub jump: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_fall_animation")]
-    pub fall: Animation,
+    pub fall: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_crouch_animation")]
-    pub crouch: Animation,
+    pub crouch: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_death_back_animation")]
-    pub death_back: Animation,
+    pub death_back: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_death_face_animation")]
-    pub death_face: Animation,
+    pub death_face: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_punch_animation")]
-    pub punch: Animation,
+    pub punch: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_run_animation")]
-    pub run: Animation,
+    pub run: AnimationMetadata,
     #[serde(default = "PlayerAnimations::default_hurt_animation")]
-    pub hurt: Animation,
+    pub hurt: AnimationMetadata,
+    #[serde(default = "PlayerAnimations::default_catching_animation")]
+    pub catching: AnimationMetadata,
 }
 
 impl PlayerAnimations {
-    pub fn default_idle_animation() -> Animation {
-        Animation {
+    pub fn default_idle_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::IDLE_ANIMATION_ID.to_string(),
             row: 0,
             frames: 7,
@@ -88,18 +90,18 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_move_animation() -> Animation {
-        Animation {
+    pub fn default_move_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::MOVE_ANIMATION_ID.to_string(),
             row: 1,
-            frames: 8,
+            frames: 7,
             fps: 10,
             is_looping: true,
         }
     }
 
-    pub fn default_jump_animation() -> Animation {
-        Animation {
+    pub fn default_jump_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::JUMP_ANIMATION_ID.to_string(),
             row: 2,
             frames: 1,
@@ -108,8 +110,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_fall_animation() -> Animation {
-        Animation {
+    pub fn default_fall_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::FALL_ANIMATION_ID.to_string(),
             row: 3,
             frames: 1,
@@ -118,8 +120,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_crouch_animation() -> Animation {
-        Animation {
+    pub fn default_crouch_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::CROUCH_ANIMATION_ID.to_string(),
             row: 4,
             frames: 1,
@@ -128,8 +130,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_death_back_animation() -> Animation {
-        Animation {
+    pub fn default_death_back_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::DEATH_BACK_ANIMATION_ID.to_string(),
             row: 5,
             frames: 7,
@@ -138,8 +140,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_death_face_animation() -> Animation {
-        Animation {
+    pub fn default_death_face_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::DEATH_FACE_ANIMATION_ID.to_string(),
             row: 6,
             frames: 7,
@@ -148,8 +150,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_punch_animation() -> Animation {
-        Animation {
+    pub fn default_punch_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::PUNCH_ANIMATION_ID.to_string(),
             row: 9,
             frames: 8,
@@ -158,8 +160,8 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_run_animation() -> Animation {
-        Animation {
+    pub fn default_run_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::RUN_ANIMATION_ID.to_string(),
             row: 8,
             frames: 4,
@@ -168,11 +170,21 @@ impl PlayerAnimations {
         }
     }
 
-    pub fn default_hurt_animation() -> Animation {
-        Animation {
+    pub fn default_hurt_animation() -> AnimationMetadata {
+        AnimationMetadata {
             id: Player::HURT_ANIMATION_ID.to_string(),
             row: 7,
             frames: 2,
+            fps: 3,
+            is_looping: false,
+        }
+    }
+
+    pub fn default_catching_animation() -> AnimationMetadata {
+        AnimationMetadata {
+            id: Player::CATCH_ANIMATION_ID.to_string(),
+            row: 10,
+            frames: 4,
             fps: 5,
             is_looping: true,
         }
@@ -192,13 +204,14 @@ impl Default for PlayerAnimations {
             punch: Self::default_punch_animation(),
             run: Self::default_run_animation(),
             hurt: Self::default_hurt_animation(),
+            catching: Self::default_catching_animation(),
 
         }
     }
 }
 
-impl From<Vec<Animation>> for PlayerAnimations {
-    fn from(vec: Vec<Animation>) -> Self {
+impl From<Vec<AnimationMetadata>> for PlayerAnimations {
+    fn from(vec: Vec<AnimationMetadata>) -> Self {
         PlayerAnimations {
             idle: vec
                 .iter()
@@ -250,11 +263,16 @@ impl From<Vec<Animation>> for PlayerAnimations {
                 .find(|anim| anim.id == Player::HURT_ANIMATION_ID)
                 .cloned()
                 .unwrap(),
+            catching: vec
+                .iter()
+                .find(|anim| anim.id == Player::CATCH_ANIMATION_ID)
+                .cloned()
+                .unwrap(),
         }
     }
 }
 
-impl From<PlayerAnimations> for Vec<Animation> {
+impl From<PlayerAnimations> for Vec<AnimationMetadata> {
     fn from(params: PlayerAnimations) -> Self {
         vec![
             params.idle,
@@ -267,6 +285,7 @@ impl From<PlayerAnimations> for Vec<Animation> {
             params.punch,
             params.run,
             params.hurt,
+            params.catching,
         ]
     }
 }

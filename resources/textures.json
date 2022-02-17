@@ -16,5 +16,14 @@
       "x": 96,
       "y": 80
     }
+  },
+  {
+    "id": "soccer-ball",
+    "path": "textures/soccer-ball-animation.png",
+    "type": "spritesheet",
+    "sprite_size": {
+      "x": 32,
+      "y": 32
+    }
   }
 ]
