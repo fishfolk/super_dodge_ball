@@ -43,6 +43,9 @@ impl Ball {
         if self.vel.length() > 5. {
             self.vel = self.vel.normalize() * 5.;
         }
+    }
+
+    pub(crate) fn stop(&mut self) {
         if self.collided {
             self.vel -= self.vel / 5.;
         }

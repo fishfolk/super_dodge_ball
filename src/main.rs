@@ -181,8 +181,6 @@ async fn local_game() {
     ];
     let mut game = new_game(&keys_mapped).await;
     // let mut time_pressed = 0.;
-    //
-    //
     loop {
         let frame_t = get_time();
         if is_key_pressed(keys_mapped[RESET_KEY]) {
@@ -199,8 +197,12 @@ async fn local_game() {
                 let (collided, change_x, change_y) = colliding_with(&game.ball.pos, game.ball.r, &player);
                 if !collided { continue; }
                 if player.life <= 0 { continue; }
-                let option = game.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
+                // TODO Find which direction the ball is coming from
+                // TODO After that check if the direction key is pressed
+                // TODO Also check if `B` Button is pressed or not
+                // TODO Only then the player can pick catch the ball
                 // TODO must take account of how long the key pressed, if it's more than the threshold, stop catching
+                let option = game.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
                 if is_key_down(*option) {
                     player.catching(frame_t);
                 }
@@ -208,6 +210,7 @@ async fn local_game() {
                     player.not_catching();
                 }
                 // TODO: must break down the following ugly conditions
+                // FIXME: When I am checking if B button is pressed and setting ready_to_catch, the player is catching the ball, but we also need the direction key to be pressed
                 if player.ready_to_catch {
                     game.ball.picked_up(i);
                     player.ready_to_catch = false;
@@ -215,15 +218,9 @@ async fn local_game() {
                 } else {
                     if !game.ball.stopped {
                         if game.ball.thrown && player.is_hit == false {
+                            // TODO: Damage will be based on ball's velocity and distance covered
                             player.life -= 10;
                             player.is_hit = true;
-                        }
-                        if player.life <= 0 {
-                            player.animation_player.set_animation(Player::DEATH_BACK_ANIMATION_ID);
-                            player.animation_player.update();
-                        } else {
-                            player.animation_player.set_animation(Player::HURT_ANIMATION_ID);
-                            player.animation_player.update();
                         }
                     } else {
                         player.is_hit = false;
@@ -233,9 +230,7 @@ async fn local_game() {
             }
             game.set_zoom(None);
         }
-
-        if !game.ball.thrown {
-            if game.ball.grabbed_by.is_some() {
+        if !game.ball.thrown && game.ball.grabbed_by.is_some() {
                 match team_with_ball {
                     Team::One => {
                         game.ball.pos = game.players[game.ball.grabbed_by.unwrap()].pos + Vec2::new(PLAYER_WIDTH + game.ball.r + 10., 0.);
@@ -244,7 +239,9 @@ async fn local_game() {
                         game.ball.pos = game.players[game.ball.grabbed_by.unwrap()].pos - Vec2::new(game.ball.r + 10., 0.);
                     }
                 }
-            }
+        } else if game.ball.collided {
+            game.ball.stop();
+            game.set_zoom(None);
         } else {
             game.ball.throw();
             game.set_zoom(Some([-0.0035, 0.0035]));

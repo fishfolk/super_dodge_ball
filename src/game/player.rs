@@ -48,7 +48,6 @@ impl Player {
 
 impl Player {
     pub(crate) fn move_(&mut self, keys_pressed: [bool; 6]) {
-        // can move the bellow code to player
         if self.life <= 0 {
             self.animation_player.set_animation(Player::DEATH_BACK_ANIMATION_ID);
             self.animation_player.update();
