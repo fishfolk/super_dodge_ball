@@ -3,6 +3,7 @@ use std::ops::Deref;
 use macroquad::prelude::*;
 use macroquad::experimental::animation::{Animation, AnimatedSprite};
 use macroquad::prelude::collections::storage;
+use macroquad::telemetry::frame;
 use game::has_direction;
 use game::draw_utilities::{draw_line_a, draw_rectangle_lines_a};
 use crate::game::{calculate_movement, Game, other_team};
@@ -13,6 +14,7 @@ use crate::game::ball::animations::BallAnimations;
 use crate::game::ball::Ball;
 use crate::game::character::PlayerCharacterParams;
 use crate::game::resources::{load_resources, Resources};
+use crate::json::is_false;
 
 pub mod helpers;
 pub mod error;
@@ -64,7 +66,7 @@ pub enum Team {
 }
 
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum FacingTo {
     FacingTop,
     FacingBottom,
@@ -148,7 +150,8 @@ fn update_player(game: &mut Game, player_index: usize) {
         is_key_down(keys[&PlayerAction::A])
     ];
     let player: &mut Player = &mut game.players[player_index];
-    player.move_(keys_pressed);
+    player.update_player_state(keys_pressed);
+    player.set_animation();
 }
 
 fn throw_ball(game: &mut Game, player_index: usize, team_with_ball: &Team) -> Option<usize> {
@@ -189,80 +192,24 @@ async fn local_game() {
             next_frame().await;
             continue;
         }
-        // check which team has the ball
-        let team_with_ball = game.which_team_has_ball();
-        for i in 0..game.players.len() {
-            {
-                let player: &mut Player = &mut game.players[i];
-                let (collided, change_x, change_y) = colliding_with(&game.ball.pos, game.ball.r, &player);
-                if !collided { continue; }
-                if player.life <= 0 { continue; }
-                // TODO Find which direction the ball is coming from
-                // TODO After that check if the direction key is pressed
-                // TODO Also check if `B` Button is pressed or not
-                // TODO Only then the player can pick catch the ball
-                // TODO must take account of how long the key pressed, if it's more than the threshold, stop catching
-                let option = game.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
-                if is_key_down(*option) {
-                    player.catching(frame_t);
-                }
-                if is_key_released(*option) {
-                    player.not_catching();
-                }
-                // TODO: must break down the following ugly conditions
-                // FIXME: When I am checking if B button is pressed and setting ready_to_catch, the player is catching the ball, but we also need the direction key to be pressed
-                if player.ready_to_catch {
-                    game.ball.picked_up(i);
-                    player.ready_to_catch = false;
-                    player.has_ball = true;
-                } else {
-                    if !game.ball.stopped {
-                        if game.ball.thrown && player.is_hit == false {
-                            // TODO: Damage will be based on ball's velocity and distance covered
-                            player.life -= 10;
-                            player.is_hit = true;
-                        }
-                    } else {
-                        player.is_hit = false;
-                    }
-                    game.ball.update_velocity_on_collision(change_x, change_y);
-                }
-            }
-            game.set_zoom(None);
-        }
-        if !game.ball.thrown && game.ball.grabbed_by.is_some() {
-                match team_with_ball {
-                    Team::One => {
-                        game.ball.pos = game.players[game.ball.grabbed_by.unwrap()].pos + Vec2::new(PLAYER_WIDTH + game.ball.r + 10., 0.);
-                    }
-                    Team::Two => {
-                        game.ball.pos = game.players[game.ball.grabbed_by.unwrap()].pos - Vec2::new(game.ball.r + 10., 0.);
-                    }
-                }
-        } else if game.ball.collided {
-            game.ball.stop();
-            game.set_zoom(None);
-        } else {
-            game.ball.throw();
-            game.set_zoom(Some([-0.0035, 0.0035]));
-        }
-
+        game.on_player_doing_things_with_ball(frame_t);
+        game.on_player_catching_ball();
+        game.on_ball_hitting_player();
+        game.on_player_threw_ball();
         for i in 0..game.players.len() {
             update_player(&mut game, i);
         }
+        let team = game.which_team_has_ball();
         if let Some(p) = game.ball.grabbed_by {
-            throw_ball(&mut game, p, &team_with_ball);
+            throw_ball(&mut game, p, &team);
         }
-
         debug_ball_throwing(&mut game);
         is_ball_outside_boundary(&mut game);
-
         //
         //
         // Drawing stuffs
         //
         //
-
         match mouse_wheel() {
             (_x, y) if y != 0.0 => {
                 let mut zoom = game.zoom;
@@ -294,12 +241,38 @@ async fn local_game() {
         for (i, player) in game.players.iter().enumerate() {
             let txt = format!("{}", player.life);
             draw_text(&txt, player.pos.x, player.pos.y - 20., 20.0, calculate_life_color(player.life));
-            let flip_x = i >= game.players.len() / 2;
+            let flip_x = should_face_to(
+                player.facing_to.clone(),
+                if i >= game.players.len() { Team::Two} else { Team::Two },
+                player.facing_to_before.clone()
+            );
             player.animation_player.draw(
                 player.pos, 0., flip_x, false,
             );
         }
         next_frame().await
+    }
+}
+
+fn should_face_to(facing_to: FacingTo, which_team: Team, facing_to_before: FacingTo) -> bool {
+    let which = || {
+        if facing_to_before == FacingTo::FacingLeft {
+            if which_team == Team::One { false }
+            else { true }
+        } else {
+            if which_team == Team::One { true }
+            else { false }
+        }
+    };
+    match facing_to {
+        FacingTo::FacingTop => which(),
+        FacingTo::FacingBottom => which(),
+        FacingTo::FacingRight => false,
+        FacingTo::FacingLeft => true,
+        FacingTo::FacingTopLeft => true,
+        FacingTo::FacingTopRight => false,
+        FacingTo::FacingBottomRight => false,
+        FacingTo::FacingBottomLeft => true,
     }
 }
 

@@ -1,7 +1,7 @@
 use macroquad::prelude::*;
 use macroquad::prelude::animation::{Animation, AnimatedSprite};
 use std::collections::HashMap;
-use crate::{AnimationPlayer, DEFAULT_ZOOM, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, Team};
+use crate::{AnimationPlayer, colliding_with, DEFAULT_ZOOM, FacingTo, KeyCode, Player, PLAYER_HEIGHT, PLAYER_WIDTH, PlayerAction, Team};
 use crate::game::ball::animations::BallAnimationParams;
 
 pub(crate) mod camera;
@@ -25,6 +25,12 @@ pub enum Sideline {
     Inside,
 }
 
+pub enum GameState {
+    DroppedBall,
+    BallHitsPlayer,
+    PlayerCatchingBall
+}
+
 pub struct Game {
     pub(crate) players: Vec<Player>,
     pub(crate) balls: Vec<AnimationPlayer>,
@@ -36,6 +42,82 @@ pub struct Game {
     pub(crate) keys_pressed: Vec<KeyCode>,
     pub(crate) textures: Vec<Texture2D>,
     pub(crate) zoom: Vec2,
+}
+
+impl Game {
+    pub(crate) fn on_player_doing_things_with_ball(&mut self, frame_t: f64) {
+        // check which team has the ball
+        let team_with_ball = self.which_team_has_ball();
+        for i in 0..self.players.len() {
+            {
+                let player: &mut Player = &mut self.players[i];
+                let (collided, change_x, change_y) = colliding_with(&self.ball.pos, self.ball.r, &player);
+                if !collided { continue; }
+                if player.life <= 0 { continue; }
+                // TODO Find which direction the ball is coming from
+                // TODO After that check if the direction key is pressed
+                // TODO Also check if `B` Button is pressed or not
+                // TODO Only then the player can pick catch the ball
+                // TODO must take account of how long the key pressed, if it's more than the threshold, stop catching
+                let option = self.key_sets[&team_with_ball].get(&PlayerAction::B).unwrap();
+                if is_key_down(*option) {
+                    player.catching(frame_t);
+                }
+                if is_key_released(*option) {
+                    player.not_catching();
+                }
+                // TODO: must break down the following ugly conditions
+                // FIXME: When I am checking if B button is pressed and setting ready_to_catch, the player is catching the ball, but we also need the direction key to be pressed
+                if player.ready_to_catch {
+                    self.ball.picked_up(i);
+                    player.ready_to_catch = false;
+                    player.has_ball = true;
+                } else {
+                    if !self.ball.stopped {
+                        if self.ball.thrown && player.is_hit == false {
+                            // TODO: Damage will be based on ball's velocity and distance covered
+                            player.life -= 10;
+                            player.is_hit = true;
+                        }
+                    } else {
+                        player.is_hit = false;
+                    }
+                    self.ball.update_velocity_on_collision(change_x, change_y);
+                }
+            }
+            self.set_zoom(None);
+        }
+    }
+}
+
+impl Game {
+    pub(crate) fn on_player_threw_ball(&mut self) {
+        self.ball.throw();
+        self.set_zoom(Some([-0.0035, 0.0035]));
+    }
+}
+
+impl Game {
+    pub(crate) fn on_ball_hitting_player(&mut self) {
+        self.ball.stop();
+        self.set_zoom(None);
+    }
+}
+
+impl Game {
+    pub(crate) fn on_player_catching_ball(&mut self) {
+        let team_with_ball = self.which_team_has_ball();
+        if !self.ball.thrown && self.ball.grabbed_by.is_some() {
+            match team_with_ball {
+                Team::One => {
+                    self.ball.pos = self.players[self.ball.grabbed_by.unwrap()].pos + Vec2::new(PLAYER_WIDTH + self.ball.r + 10., 0.);
+                }
+                Team::Two => {
+                    self.ball.pos = self.players[self.ball.grabbed_by.unwrap()].pos - Vec2::new(self.ball.r + 10., 0.);
+                }
+            }
+        }
+    }
 }
 
 
@@ -113,13 +195,13 @@ impl Game {
 pub(crate) fn calculate_movement(keys: [bool;6]) -> (f32, FacingTo, Option<Vec2>) {
     let (key_up, key_right, key_down, key_left) = (keys[0], keys[1], keys[2], keys[3]);
     if key_up && key_right {
-        (45., FacingTo::FacingTopRight, Some(Vec2::new(1., -1.)))
+        (45., FacingTo::FacingRight, Some(Vec2::new(1., -1.)))
     } else if key_down && key_right {
-        (135., FacingTo::FacingBottomRight, Some(Vec2::new(1., 1.)))
+        (135., FacingTo::FacingRight, Some(Vec2::new(1., 1.)))
     } else if key_up && key_left {
-        (315., FacingTo::FacingTopLeft, Some(Vec2::new(-1., -1.)))
+        (315., FacingTo::FacingLeft, Some(Vec2::new(-1., -1.)))
     } else if key_down && key_left {
-        (225., FacingTo::FacingBottomLeft, Some(Vec2::new(-1., 1.)))
+        (225., FacingTo::FacingLeft, Some(Vec2::new(-1., 1.)))
     } else if key_right {
         (90., FacingTo::FacingRight, Some(Vec2::new(1., 0.)))
     } else if key_left {
