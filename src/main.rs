@@ -11,8 +11,9 @@ use game::has_direction::{HasDirection};
 use game::player::Player;
 use crate::game::animations::{AnimationParams, AnimationPlayer};
 use crate::game::ball::animations::BallAnimations;
-use crate::game::ball::Ball;
+use crate::game::ball::{Ball, BallState};
 use crate::game::character::PlayerCharacterParams;
+use crate::game::player::PlayerState;
 use crate::game::resources::{load_resources, Resources};
 use crate::json::is_false;
 
@@ -23,8 +24,8 @@ pub mod game;
 pub mod math;
 pub mod noise;
 
-const PLAYER_HEIGHT: f32 = 40.;
-const PLAYER_WIDTH: f32 = 55.;
+const PLAYER_HEIGHT: f32 = 54.;
+const PLAYER_WIDTH: f32 = 54.;
 const RESET_KEY: usize = 12;
 
 const TEAM_ONE_PLAYER: usize = 1;
@@ -43,7 +44,7 @@ fn _y<T: HasDirection>(p: &T) -> f32 {
 }
 
 #[derive(Eq, PartialEq, Hash, Debug)]
-enum PlayerAction {
+pub enum PlayerAction {
     A,
     B,
     MoveLeft,
@@ -66,7 +67,7 @@ pub enum Team {
 }
 
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum FacingTo {
     FacingTop,
     FacingBottom,
@@ -76,6 +77,22 @@ pub enum FacingTo {
     FacingTopRight,
     FacingBottomRight,
     FacingBottomLeft,
+}
+
+impl FacingTo {
+    pub fn opposite_direction(dir: FacingTo) -> (FacingTo, PlayerAction) {
+        match dir {
+            FacingTo::FacingTop => (FacingTo::FacingBottom, PlayerAction::MoveDown),
+            FacingTo::FacingBottom => (FacingTo::FacingTop, PlayerAction::MoveUp),
+            FacingTo::FacingRight => (FacingTo::FacingLeft, PlayerAction::MoveLeft),
+            FacingTo::FacingLeft => (FacingTo::FacingRight, PlayerAction::MoveRight),
+            FacingTo::FacingTopLeft => (FacingTo::FacingRight, PlayerAction::MoveRight),
+            FacingTo::FacingTopRight => (FacingTo::FacingLeft, PlayerAction::MoveLeft),
+            FacingTo::FacingBottomRight => (FacingTo::FacingLeft, PlayerAction::MoveLeft),
+            FacingTo::FacingBottomLeft => (FacingTo::FacingRight, PlayerAction::MoveRight)
+        }
+    }
+
 }
 
 fn calculate_life_color(life: i32) -> Color {
@@ -104,26 +121,26 @@ fn valid_position(v: &Vec2) -> bool {
     true
 }
 
-fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
+fn colliding_with(pos: &Vec2, r: f32, rect_pos: &Vec2, rect_size: &Vec2) -> (bool, bool, bool) {
     // temporary variables to set edges for testing
     let mut test_x = pos.x;
     let mut test_y = pos.y;
     // which edge is closest?
-    let change_x = if pos.x < player.pos.x {
-        test_x = player.pos.x;      // test left edge
+    let change_x = if pos.x < rect_pos.x {
+        test_x = rect_pos.x;      // test left edge
         true
-    } else if pos.x > player.pos.x + PLAYER_WIDTH {
-        test_x = player.pos.x + PLAYER_WIDTH;   // right edge
+    } else if pos.x > rect_pos.x + rect_size.x {
+        test_x = rect_pos.x + rect_size.x;   // right edge
         true
     } else {
         false
     };
     //
-    let change_y = if pos.y < player.pos.y {
-        test_y = player.pos.y;      // top edge
+    let change_y = if pos.y < rect_pos.y {
+        test_y = rect_pos.y;      // top edge
         true
-    } else if pos.y > player.pos.y + PLAYER_HEIGHT {
-        test_y = player.pos.y + PLAYER_HEIGHT;   // bottom edge
+    } else if pos.y > rect_pos.y + rect_size.y {
+        test_y = rect_pos.y + rect_size.y;   // bottom edge
         true
     } else {
         false
@@ -136,23 +153,6 @@ fn colliding_with(pos: &Vec2, r: f32, player: &Player) -> (bool, bool, bool) {
     (distance <= r, change_x, change_y)
 }
 
-fn update_player(game: &mut Game, player_index: usize) {
-    let current_team = if player_index >= game.players.len() / 2 { Team::Two } else { Team::One };
-    let active_player = game.deref().get_active_player_for_team(current_team);
-    if Some(player_index) != active_player { return; }
-    let keys = &game.key_sets.get(&current_team).unwrap();
-    let keys_pressed = [
-        is_key_down(keys[&PlayerAction::MoveUp]),
-        is_key_down(keys[&PlayerAction::MoveRight]),
-        is_key_down(keys[&PlayerAction::MoveDown]),
-        is_key_down(keys[&PlayerAction::MoveLeft]),
-        is_key_down(keys[&PlayerAction::B]),
-        is_key_down(keys[&PlayerAction::A])
-    ];
-    let player: &mut Player = &mut game.players[player_index];
-    player.update_player_state(keys_pressed);
-    player.set_animation();
-}
 
 fn throw_ball(game: &mut Game, player_index: usize, team_with_ball: &Team) -> Option<usize> {
     if !is_key_pressed(
@@ -168,7 +168,7 @@ fn throw_ball(game: &mut Game, player_index: usize, team_with_ball: &Team) -> Op
     let pos = game.ball.pos;
     let target = game.players[target_player_index].pos;
     let target_pos = (target - pos).normalize();
-    game.ball.throwing(target_pos, pos);
+    game.ball.throwing(target_pos, pos, game.players[player_index].facing_to_before.clone());
     game.players[player_index].has_ball = false;
     game.balls[game.ball.animation].set_animation(Ball::MOVE_ANIMATION_ID);
     game.balls[game.ball.animation].update();
@@ -183,28 +183,23 @@ async fn local_game() {
         KeyCode::Enter,
     ];
     let mut game = new_game(&keys_mapped).await;
-    // let mut time_pressed = 0.;
     loop {
-        let frame_t = get_time();
+        game.time_passed = get_time();
         if is_key_pressed(keys_mapped[RESET_KEY]) {
             game = new_game(&keys_mapped).await;
             game.set_zoom(None);
             next_frame().await;
             continue;
         }
-        game.on_player_doing_things_with_ball(frame_t);
-        game.on_player_catching_ball();
-        game.on_ball_hitting_player();
-        game.on_player_threw_ball();
+        game.update_ball_state();
+        // move player code outside, AI player will be separated
         for i in 0..game.players.len() {
-            update_player(&mut game, i);
+            game.update_player(i);
         }
-        let team = game.which_team_has_ball();
-        if let Some(p) = game.ball.grabbed_by {
-            throw_ball(&mut game, p, &team);
-        }
+        game.ball.move_ball();
+        game.is_the_ball_hitting_any_player();
+        game.is_ball_hitting_boundary();
         debug_ball_throwing(&mut game);
-        is_ball_outside_boundary(&mut game);
         //
         //
         // Drawing stuffs
@@ -219,33 +214,24 @@ async fn local_game() {
             _ => (),
         }
         clear_background(LIGHTGRAY);
-        set_camera(&Camera2D {
-            target: game.ball.pos,
-            rotation: 180.,
-            zoom: game.zoom,
-            ..Default::default()
-        });
+        draw_field(&game);
+        // set_camera(&Camera2D { target: game.ball.pos, rotation: 180., zoom: game.zoom, ..Default::default() });
         debug_collision(&game);
-        {
-            let bx = _x(&game.ball);
-            let by = _y(&game.ball);
-            let which_animation = if game.ball.in_air {
-                Ball::MOVE_ANIMATION_ID
-            } else {
-                Ball::IDLE_ANIMATION_ID
-            };
-            game.balls[game.ball.animation].set_animation(which_animation);
-            game.balls[game.ball.animation].update();
-            game.balls[game.ball.animation].draw(Vec2::new(bx, by), 0., false, false);
-        }
+        game.balls[game.ball.animation].update();
+        let bx = _x(&game.ball);
+        let by = _y(&game.ball);
+        draw_rectangle_lines_a(game.ball.pos, game.ball.r, game.ball.r , 2., BLACK);
+        game.balls[game.ball.animation].draw(Vec2::new(bx, by), 0., false, false);
+
         for (i, player) in game.players.iter().enumerate() {
             let txt = format!("{}", player.life);
             draw_text(&txt, player.pos.x, player.pos.y - 20., 20.0, calculate_life_color(player.life));
             let flip_x = should_face_to(
                 player.facing_to.clone(),
-                if i >= game.players.len() { Team::Two} else { Team::Two },
-                player.facing_to_before.clone()
+                if i >= game.players.len() { Team::Two } else { Team::Two },
+                player.facing_to_before.clone(),
             );
+            // draw_rectangle_lines_a(player.pos, PLAYER_WIDTH, PLAYER_HEIGHT, 2., BLACK);
             player.animation_player.draw(
                 player.pos, 0., flip_x, false,
             );
@@ -254,14 +240,19 @@ async fn local_game() {
     }
 }
 
+fn check_for_collision(player: &mut Player, ball: &Ball) {
+    let (collided, change_x, change_y) = colliding_with(&ball.pos, ball.r,
+                                                        &player.pos,
+                                                        &Vec2::new(PLAYER_WIDTH, PLAYER_HEIGHT),
+    );
+}
+
 fn should_face_to(facing_to: FacingTo, which_team: Team, facing_to_before: FacingTo) -> bool {
     let which = || {
         if facing_to_before == FacingTo::FacingLeft {
-            if which_team == Team::One { false }
-            else { true }
+            if which_team == Team::One { false } else { true }
         } else {
-            if which_team == Team::One { true }
-            else { false }
+            if which_team == Team::One { true } else { false }
         }
     };
     match facing_to {
@@ -284,23 +275,13 @@ async fn main() {
     //camera_test().await;
 }
 
-fn is_ball_outside_boundary(game: &mut Game) {
-    let prev_pos = &game.ball.pos;
-    if prev_pos.y + game.ball.vel.y < game.field.top_edge || prev_pos.y + game.ball.vel.y > game.field.bottom_edge {
-        game.ball.vel.y *= -1.;
-        game.ball.collided = true;
-    }
-    if prev_pos.x + game.ball.vel.x > game.field.right_edge || prev_pos.x + game.ball.vel.x < game.field.left_edge {
-        game.ball.vel.x *= -1.;
-        game.ball.collided = true;
-    }
-}
 
 fn debug_ball_throwing(game: &mut Game) {
     if is_mouse_button_pressed(MouseButton::Left) { // this is for testing purpose
         let pos = Vec2::from(mouse_position());
         // reposition the ball to cursor
         game.ball.pos = pos;
+        game.gravity_line = game.ball.pos.y + PLAYER_HEIGHT;
         // which team has the ball? and mark target player from opposite side
         let m_team = game.which_team_has_ball();
         let other_team = other_team(m_team);
@@ -313,14 +294,33 @@ fn debug_ball_throwing(game: &mut Game) {
         // fix target
         let target_pos = (player.pos - game.ball.pos).normalize();
         // throw it
-        game.ball.throwing(target_pos, pos)
+        game.ball.throwing(target_pos, pos, player.facing_to_before.clone())
+    }
+
+    if is_mouse_button_pressed(MouseButton::Right) { // this is for testing purpose
+        let pos = Vec2::from(mouse_position());
+        // reposition the ball to cursor
+        game.ball.pos = pos;
+        // which team has the ball? and mark target player from opposite side
+        // fix target
+        let target_pos = (Vec2::new(game.ball.pos.x, game.ball.pos.y + 10.) - game.ball.pos).normalize();
+        game.gravity_line = game.ball.pos.y + PLAYER_HEIGHT;
+        // throw it
+        game.ball.vel = Vec2::new(-3., -1.);
+        game.ball.state = BallState::AfterHittingPlayer {
+            time_passed:game.time_passed,
+            change_y: true,
+            change_x: true
+        };
+        game.ball.throwing(target_pos, pos, FacingTo::FacingBottom)
     }
 }
 
 fn debug_collision(game: &Game) {
     let position = Vec2::from(mouse_position());
     for player in &game.players {
-        let (collided, _, _) = colliding_with(&position, 10., &player);
+        let (collided, _, _) = colliding_with(&position, 10., &player.pos,
+                                              &Vec2::new(PLAYER_WIDTH, PLAYER_HEIGHT));
         if collided {
             draw_rectangle_lines_a(position, 20., 20., 3., RED);
         }
@@ -395,7 +395,6 @@ async fn player_animation_demo() {
 async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
     let resources = storage::get::<Resources>();
     let mut game = Game::default();
-    game.gravity = Vec2::new(-2., -2.);
     game.key_sets = HashMap::from([(
         Team::One, HashMap::from([
             (PlayerAction::MoveUp, keys_mapped[0]),
@@ -423,9 +422,11 @@ async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
             animation_player
         };
         let mut players = vec![];
+        let p1_pos = Vec2::new(game.field.mid_section - PLAYER_WIDTH - 80., screen_height() / 2.);
+        let p2_pos = Vec2::new(game.field.mid_section + 80., screen_height() / 2.);
         players.push(Player::new(
             0,
-            Vec2::new(game.field.mid_section - PLAYER_WIDTH - 80., screen_height() / 2.),
+            p1_pos,
             90.,
             Vec2::new(0., 0.),
             100,
@@ -437,7 +438,7 @@ async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
 
         players.push(Player::new(
             1,
-            Vec2::new(game.field.mid_section + 80., screen_height() / 2.),
+            p2_pos,
             -90.,
             Vec2::new(0., 0.),
             100,
@@ -457,7 +458,7 @@ async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
     game.ball = Ball {
         pos: game.players[0].pos,
         vel: Vec2::default(),
-        r: 10.,
+        r: 16.,
         collided: false,
         thrown: false,
         dropped: false,
@@ -466,6 +467,8 @@ async fn new_game(keys_mapped: &Vec<KeyCode>) -> Game {
         grabbed_by: Some(0),
         animation: 0,
         stopped: true,
+        state: BallState::OnPlayersHand(0),
+        tick: 0.0
     };
     game
 }
@@ -478,159 +481,5 @@ fn window_conf() -> Conf {
         window_width: 1080,
         window_height: 860,
         ..Default::default()
-    }
-}
-
-
-fn short_angle_dist(a0: f32, a1: f32) -> f32 {
-    let max = 360.0;
-    let da = (a1 - a0) % max;
-    2.0 * da % max - da
-}
-
-fn angle_lerp(a0: f32, a1: f32, t: f32) -> f32 {
-    a0 + short_angle_dist(a0, a1) * t
-}
-
-fn draw_cross(x: f32, y: f32, color: Color) {
-    let size = 0.1;
-    let thickness = 0.005;
-    draw_line(x - size, y, x + size, y, thickness, color);
-    draw_line(x, y - size, x, y + size, thickness, color);
-}
-
-async fn camera_test() {
-    let mut target = (0., 0.);
-    let mut zoom = 1.0;
-    let mut rotation = 0.0;
-    let mut smooth_rotation: f32 = 0.0;
-    let mut offset = (0., 0.);
-
-    loop {
-        if is_key_down(KeyCode::W) {
-            target.1 -= 0.1;
-        }
-        if is_key_down(KeyCode::S) {
-            target.1 += 0.1;
-        }
-        if is_key_down(KeyCode::A) {
-            target.0 += 0.1;
-        }
-        if is_key_down(KeyCode::D) {
-            target.0 -= 0.1;
-        }
-        if is_key_down(KeyCode::Left) {
-            offset.0 -= 0.1;
-        }
-        if is_key_down(KeyCode::Right) {
-            offset.0 += 0.1;
-        }
-        if is_key_down(KeyCode::Up) {
-            offset.1 += 0.1;
-        }
-        if is_key_down(KeyCode::Down) {
-            offset.1 -= 0.1;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if is_key_down(KeyCode::Q) | is_key_down(KeyCode::Escape) {
-            break;
-        }
-
-        match mouse_wheel() {
-            (_x, y) if y != 0.0 => {
-                // Normalize mouse wheel values is browser (chromium: 53, firefox: 3)
-                #[cfg(target_arch = "wasm32")]
-                    let y = if y < 0.0 {
-                    -1.0
-                } else if y > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                };
-                if is_key_down(KeyCode::LeftControl) {
-                    zoom *= 1.1f32.powf(y);
-                } else {
-                    rotation += 10.0 * y;
-                    rotation = match rotation {
-                        angle if angle >= 360.0 => angle - 360.0,
-                        angle if angle < 0.0 => angle + 360.0,
-                        angle => angle,
-                    }
-                }
-            }
-            _ => (),
-        }
-
-        smooth_rotation = angle_lerp(smooth_rotation, rotation, 0.1);
-
-        clear_background(LIGHTGRAY);
-
-        set_camera(&Camera2D {
-            target: vec2(target.0, target.1),
-            ..Default::default()
-        });
-        draw_cross(0., 0., RED);
-
-        set_camera(&Camera2D {
-            target: vec2(target.0, target.1),
-            rotation: smooth_rotation,
-            ..Default::default()
-        });
-        draw_cross(0., 0., GREEN);
-
-        set_camera(&Camera2D {
-            target: vec2(target.0, target.1),
-            rotation: smooth_rotation,
-            zoom: vec2(zoom, zoom * screen_width() / screen_height()),
-            ..Default::default()
-        });
-        draw_cross(0., 0., BLUE);
-
-        set_camera(&Camera2D {
-            target: vec2(target.0, target.1),
-            rotation: smooth_rotation,
-            zoom: vec2(zoom, zoom * screen_width() / screen_height()),
-            offset: vec2(offset.0, offset.1),
-            ..Default::default()
-        });
-
-        // Render some primitives in camera space
-        draw_line(-0.4, 0.4, -0.8, 0.9, 0.05, BLUE);
-        draw_rectangle(-0.3, 0.3, 0.2, 0.2, GREEN);
-        draw_circle(0., 0., 0.1, YELLOW);
-
-        // Back to screen space, render some text
-        set_default_camera();
-        draw_text(
-            format!("target (WASD keys) = ({:+.2}, {:+.2})", target.0, target.1).as_str(),
-            10.0,
-            10.0,
-            15.0,
-            BLACK,
-        );
-        draw_text(
-            format!("rotation (mouse wheel) = {} degrees", rotation).as_str(),
-            10.0,
-            25.0,
-            15.0,
-            BLACK,
-        );
-        draw_text(
-            format!("zoom (ctrl + mouse wheel) = {:.2}", zoom).as_str(),
-            10.0,
-            40.0,
-            15.0,
-            BLACK,
-        );
-        draw_text(
-            format!("offset (arrow keys) = ({:+.2}, {:+.2})", offset.0, offset.1).as_str(),
-            10.0,
-            55.0,
-            15.0,
-            BLACK,
-        );
-        draw_text("HELLO", 30.0, 200.0, 30.0, BLACK);
-
-        next_frame().await
     }
 }

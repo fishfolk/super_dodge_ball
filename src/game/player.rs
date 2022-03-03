@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use macroquad::color::Color;
 use macroquad::math::Rect;
+use macroquad_platformer::Actor;
 use crate::{AnimationPlayer, calculate_movement, FacingTo, HasDirection, KeyCode, PlayerAction, valid_position, Vec2};
 use crate::game::ball::Ball;
 use crate::game::character::PlayerCharacterParams;
 use crate::game::player::PlayerState::Walking;
 
+#[derive(PartialEq)]
 pub enum PlayerState {
     Idle,
     Walking,
@@ -15,6 +17,8 @@ pub enum PlayerState {
     Catching,
     Hurting,
     Died,
+    Throwing,
+    Passing,
 }
 
 pub struct Player {
@@ -40,28 +44,6 @@ pub struct Player {
 }
 
 impl Player {
-    pub(crate) fn not_catching(&mut self) {
-        self.ready_to_catch = false;
-        self.catch_grace_time = 0.;
-    }
-}
-
-impl Player {
-    pub fn catching(&mut self, frame_t: f64) {
-        if !self.ready_to_catch {
-            self.ready_to_catch = true;
-            self.catch_grace_time = frame_t;
-        } else {
-            self.catch_grace_time += frame_t;
-        }
-        if self.catch_grace_time > Player::CATCH_GRACE_TIME {
-            self.ready_to_catch = false;
-            self.catch_grace_time = 0.
-        }
-    }
-}
-
-impl Player {
     pub(crate) fn set_animation(&mut self) {
         let state = match self.state {
             PlayerState::Idle => Player::IDLE_ANIMATION_ID,
@@ -72,54 +54,13 @@ impl Player {
             PlayerState::Catching => Player::CATCH_ANIMATION_ID,
             PlayerState::Hurting => Player::HURT_ANIMATION_ID,
             PlayerState::Died => Player::DEATH_BACK_ANIMATION_ID,
+            PlayerState::Throwing => Player::CATCH_ANIMATION_ID,
+            PlayerState::Passing => Player::CATCH_ANIMATION_ID,
         };
         self.animation_player.set_animation(state);
         self.animation_player.update();
     }
 
-    pub(crate) fn update_player_state(&mut self, keys_pressed: [bool; 6]) {
-        if self.life <= 0 {
-            self.state = PlayerState::Died;
-            return;
-        }
-        if self.is_hit {
-            self.state = PlayerState::Hurting;
-            return;
-        }
-        if keys_pressed[4] && keys_pressed.contains(&true) {
-            self.state = PlayerState::Catching;
-            return;
-        }
-        if keys_pressed[5] {
-            self.state = PlayerState::Ducking;
-            return;
-        }
-        let (rotation, facing_to, acc) = calculate_movement(keys_pressed);
-        if acc.is_some() {
-            self.facing_to = facing_to;
-            if self.facing_to == FacingTo::FacingRight || self.facing_to == FacingTo::FacingLeft {
-                self.facing_to_before = self.facing_to.clone();
-            }
-            self.rotation = rotation;
-            self.vel += acc.unwrap_or(-self.vel);
-            if self.vel.length() > 0. {
-                self.state = PlayerState::Walking;
-            }
-            if self.vel.length() > 5. {
-                self.vel = self.vel.normalize() * 5.;
-            }
-            let prev_pos = self.pos;
-            self.pos += self.vel;
-            if !valid_position(&self.pos) {
-                self.state = PlayerState::Idle;
-                self.pos = prev_pos;
-                self.vel = Vec2::ZERO;
-            }
-        } else {
-            self.state = PlayerState::Idle;
-            self.vel = Vec2::ZERO;
-        }
-    }
 }
 
 impl Player {
@@ -165,7 +106,7 @@ impl Player {
 
     pub fn throwing(&mut self, ball: &mut Ball) {
         let target_pos = (self.pos - ball.pos).normalize();
-        ball.throwing(target_pos, self.pos);
+        ball.throwing(target_pos, self.pos, self.facing_to_before.clone());
     }
 }
 
@@ -176,10 +117,3 @@ impl HasDirection for Player {
     }
 }
 
-enum PlayerStates {
-    Idle,
-    Moving,
-    Running,
-    Catching,
-    Ducking
-}
